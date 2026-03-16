@@ -1221,11 +1221,13 @@ function LandingPage({ onLaunch }) {
         <div className="nav-logo">Capital<span>IQ</span></div>
         <div className="nav-links">
           <span className="nav-link" onClick={() => document.getElementById("features")?.scrollIntoView({behavior:"smooth"})}>Features</span>
-          <span className="nav-link" onClick={() => document.getElementById("pricing")?.scrollIntoView({behavior:"smooth"})}>Pricing</span>
           <span className="nav-link">Docs</span>
           <span className="nav-link">Blog</span>
         </div>
-        <button className="nav-cta" onClick={onLaunch}>Try Free →</button>
+        <div style={{ display:"flex", gap:8 }}>
+          <button className="nav-cta" style={{ background:"transparent", color:"var(--ink)", border:"1.5px solid var(--border)" }} onClick={onLaunch}>Sign in</button>
+          <button className="nav-cta" onClick={onLaunch}>Get started free →</button>
+        </div>
       </nav>
 
       {/* Hero */}
@@ -1242,9 +1244,9 @@ function LandingPage({ onLaunch }) {
             </p>
             <div className="hero-actions">
               <button className="btn-primary" onClick={onLaunch}>
-                Analyse your first project free →
+                Create free account →
               </button>
-              <button className="btn-secondary">See how it works</button>
+              <button className="btn-secondary" onClick={onLaunch}>⚡ Try demo instantly</button>
             </div>
             <div className="hero-proof">
               <div className="hero-stars">★★★★★</div>
@@ -1351,87 +1353,20 @@ function LandingPage({ onLaunch }) {
         </div>
       </section>
 
-      {/* Pricing */}
-      <section className="section" id="pricing">
-        <div className="section-inner">
-          <div className="section-label">Pricing</div>
-          <h2 className="section-h2">Pay per project.<br /><em>Only when you need it.</em></h2>
-          <p className="section-sub">No subscriptions, no monthly fees for occasional users. Pay for what you use. Upgrade when it makes sense.</p>
-          <div className="pricing-grid">
-            {[
-              {
-                tier: "Pay-as-you-go", price: "19", per: "per project",
-                desc: "Perfect for SMEs evaluating occasional investments. Full access for one project, 90 days.",
-                features: ["Full DCF analysis", "Scenario manager", "PDF export", "90-day project access", "Email support"],
-                btnClass: "btn-plan-outline", btnText: "Start a project →", featured: false,
-              },
-              {
-                tier: "Growth", price: "49", per: "per month",
-                desc: "For businesses making regular investment decisions. Unlimited projects, all features.",
-                features: ["Unlimited projects", "Excel + PDF export", "Monte Carlo simulation", "3-statement model", "Priority support"],
-                btnClass: "btn-plan-filled", btnText: "Start free trial →", featured: true, badge: "Most Popular",
-              },
-              {
-                tier: "Agency", price: "149", per: "per month",
-                desc: "For accountants and advisors managing multiple clients. White-label PDF reports.",
-                features: ["10 client workspaces", "White-label reports", "Team collaboration", "API access", "Dedicated support"],
-                btnClass: "btn-plan-dark", btnText: "Contact sales →", featured: false,
-              },
-            ].map(p => (
-              <div className={`pricing-card ${p.featured ? "featured" : ""}`} key={p.tier}>
-                {p.badge && <div className="pricing-badge">{p.badge}</div>}
-                <div className="pricing-tier">{p.tier}</div>
-                <div className="pricing-price"><sup>€</sup>{p.price}</div>
-                <div className="pricing-price-sub">{p.per}</div>
-                <div className="pricing-desc">{p.desc}</div>
-                <div className="pricing-divider" />
-                {p.features.map(f => (
-                  <div className="pricing-feature" key={f}>
-                    <div className="pricing-check">✓</div>
-                    <div className="pricing-feat-text">{f}</div>
-                  </div>
-                ))}
-                <button className={`btn-plan ${p.btnClass}`} onClick={onLaunch}>{p.btnText}</button>
-              </div>
-            ))}
-          </div>
-          <div style={{ textAlign: "center", marginTop: 24, fontSize: 13, color: "var(--ink3)" }}>
-            🔒 Secure payments via Stripe · Cancel anytime · VAT invoices for EU businesses
-          </div>
-        </div>
-      </section>
-
-      {/* Testimonials */}
-      <section className="section" style={{ background: "var(--cream2)" }}>
-        <div className="section-inner">
-          <div className="section-label">What customers say</div>
-          <h2 className="section-h2">Real decisions, <em>real results</em></h2>
-          <div className="testi-grid">
-            {[
-              { q: "We were about to buy a second warehouse based on gut feel. CapitalIQ showed us the IRR was 4% — below our WACC. We didn't buy it. Saved us €400K.", name: "Markus H.", role: "CEO, Logistics SME · Finland", init: "MH" },
-              { q: "I used to spend two days building Excel models for clients. Now I do it in an hour and the output looks more professional than what I was producing manually.", name: "Sarah K.", role: "Financial Advisor · UK", init: "SK" },
-              { q: "The scenario manager is brilliant. Being able to show the board three scenarios side by side in one click — that used to take me half a day to prepare.", name: "Tomás V.", role: "CFO, Manufacturing · Czech Republic", init: "TV" },
-            ].map(t => (
-              <div className="testi-card" key={t.name}>
-                <div className="testi-stars">★★★★★</div>
-                <div className="testi-quote">"{t.q}"</div>
-                <div className="testi-author">
-                  <div className="testi-avatar">{t.init}</div>
-                  <div><div className="testi-name">{t.name}</div><div className="testi-role">{t.role}</div></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* CTA */}
       <div className="cta-banner">
         <h2>Start your first analysis today</h2>
-        <p>No credit card required. Full access on your first project — free.</p>
-        <button className="btn-cta-white" onClick={onLaunch}>
-          Analyse a project for free →
-        </button>
+        <p>Free forever on your first project. No credit card required.</p>
+        <div style={{ display:"flex", gap:12, justifyContent:"center", flexWrap:"wrap" }}>
+          <button className="btn-cta-white" onClick={onLaunch}>
+            Create free account →
+          </button>
+          <button onClick={onLaunch} style={{ padding:"16px 28px", borderRadius:8, fontSize:15, fontWeight:600, cursor:"pointer", border:"2px solid rgba(255,255,255,0.4)", background:"transparent", color:"#fff", fontFamily:"var(--sans)", transition:"all 0.15s" }}
+            onMouseEnter={e => e.currentTarget.style.borderColor="rgba(255,255,255,0.8)"}
+            onMouseLeave={e => e.currentTarget.style.borderColor="rgba(255,255,255,0.4)"}>
+            ⚡ Try demo — no sign up
+          </button>
+        </div>
       </div>
 
       {/* Footer */}
@@ -1466,8 +1401,455 @@ function LandingPage({ onLaunch }) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════
-   APP SCREEN
+   FINANCIAL RATIOS TAB
 ══════════════════════════════════════════════════════════════════════ */
+function RatiosTab({ inputs, totals, schedule }) {
+  const { fmtK, symbol } = useFmt();
+
+  // Derive approximate financials from inputs & schedule
+  const lastYr   = schedule[schedule.length - 1] || {};
+  const midYr    = schedule[Math.floor(schedule.length / 2)] || lastYr;
+  const revenue  = lastYr.balance   * 0.18 || 0;   // approx revenue as % of portfolio
+  const cogs     = revenue * 0.55;
+  const grossP   = revenue - cogs;
+  const opex     = revenue * 0.15;
+  const ebitda   = grossP - opex;
+  const ebit     = ebitda - (lastYr.balance * 0.03 || 0);
+  const interest = Number(inputs.principal) * 0.055;
+  const ebt      = ebit - interest;
+  const tax      = Math.max(0, ebt * (Number(inputs.tax) / 100));
+  const netInc   = ebt - tax;
+  const totalAssets = lastYr.balance || 1;
+  const equity   = totalAssets * 0.55;
+  const debt     = totalAssets * 0.45;
+  const currAssets = totalAssets * 0.35;
+  const currLiab   = totalAssets * 0.20;
+  const inventory  = currAssets * 0.30;
+  const cash       = currAssets * 0.25;
+
+  const ratioGroups = [
+    {
+      group: "📈 Profitability Ratios",
+      color: "#0d7a55",
+      ratios: [
+        { name: "Gross Profit Margin",    value: revenue > 0 ? (grossP/revenue)*100 : 0,      fmt: "pct",   bench: "> 40%",  good: grossP/revenue > 0.40 },
+        { name: "EBITDA Margin",          value: revenue > 0 ? (ebitda/revenue)*100 : 0,       fmt: "pct",   bench: "> 20%",  good: ebitda/revenue > 0.20 },
+        { name: "Net Profit Margin",      value: revenue > 0 ? (netInc/revenue)*100 : 0,       fmt: "pct",   bench: "> 10%",  good: netInc/revenue > 0.10 },
+        { name: "Return on Assets (ROA)", value: totalAssets > 0 ? (netInc/totalAssets)*100 : 0, fmt: "pct", bench: "> 5%",   good: netInc/totalAssets > 0.05 },
+        { name: "Return on Equity (ROE)", value: equity > 0 ? (netInc/equity)*100 : 0,          fmt: "pct", bench: "> 15%",  good: netInc/equity > 0.15 },
+        { name: "Return on Investment",   value: totals.roi,                                     fmt: "pct", bench: "> 20%",  good: totals.roi > 20 },
+      ],
+    },
+    {
+      group: "💧 Liquidity Ratios",
+      color: "#1565c0",
+      ratios: [
+        { name: "Current Ratio",          value: currLiab > 0 ? currAssets/currLiab : 0,         fmt: "x",   bench: "> 1.5×", good: currAssets/currLiab > 1.5 },
+        { name: "Quick Ratio",            value: currLiab > 0 ? (currAssets-inventory)/currLiab : 0, fmt: "x", bench: "> 1.0×", good: (currAssets-inventory)/currLiab > 1.0 },
+        { name: "Cash Ratio",             value: currLiab > 0 ? cash/currLiab : 0,                fmt: "x",   bench: "> 0.5×", good: cash/currLiab > 0.5 },
+        { name: "Operating Cash Flow Ratio", value: currLiab > 0 ? (lastYr.fcf||0)/currLiab : 0, fmt: "x",   bench: "> 0.8×", good: (lastYr.fcf||0)/currLiab > 0.8 },
+      ],
+    },
+    {
+      group: "⚖️ Leverage / Solvency Ratios",
+      color: "#7b1fa2",
+      ratios: [
+        { name: "Debt-to-Equity",         value: equity > 0 ? debt/equity : 0,                  fmt: "x",   bench: "< 2.0×", good: debt/equity < 2.0 },
+        { name: "Debt-to-Assets",         value: totalAssets > 0 ? debt/totalAssets : 0,         fmt: "x",   bench: "< 0.6×", good: debt/totalAssets < 0.6 },
+        { name: "Interest Coverage (ICR)",value: interest > 0 ? ebit/interest : 0,               fmt: "x",   bench: "> 3.0×", good: ebit/interest > 3.0 },
+        { name: "Debt Service Coverage",  value: interest > 0 ? ebitda/interest : 0,             fmt: "x",   bench: "> 2.0×", good: ebitda/interest > 2.0 },
+        { name: "Equity Multiplier",      value: equity > 0 ? totalAssets/equity : 0,            fmt: "x",   bench: "< 3.0×", good: totalAssets/equity < 3.0 },
+      ],
+    },
+    {
+      group: "⚙️ Efficiency Ratios",
+      color: "#e65100",
+      ratios: [
+        { name: "Asset Turnover",         value: totalAssets > 0 ? revenue/totalAssets : 0,      fmt: "x",   bench: "> 0.5×", good: revenue/totalAssets > 0.5 },
+        { name: "Inventory Turnover",     value: inventory > 0 ? cogs/inventory : 0,             fmt: "x",   bench: "> 4.0×", good: cogs/inventory > 4.0 },
+        { name: "Receivables Turnover",   value: revenue > 0 ? revenue/(currAssets*0.4) : 0,     fmt: "x",   bench: "> 6.0×", good: revenue/(currAssets*0.4) > 6.0 },
+        { name: "Days Sales Outstanding", value: revenue > 0 ? ((currAssets*0.4)/revenue)*365 : 0, fmt: "days", bench: "< 45 days", good: ((currAssets*0.4)/revenue)*365 < 45 },
+        { name: "Capital Employed Return",value: (totalAssets-currLiab) > 0 ? (ebit/(totalAssets-currLiab))*100 : 0, fmt: "pct", bench: "> 12%", good: ebit/(totalAssets-currLiab) > 0.12 },
+      ],
+    },
+    {
+      group: "📊 Investment Ratios",
+      color: "#c8960c",
+      ratios: [
+        { name: "NPV",                    value: totals.npv,                                     fmt: "money", bench: "> 0",   good: totals.npv > 0 },
+        { name: "IRR",                    value: totals.irr ? totals.irr * 100 : 0,              fmt: "pct",   bench: `> ${inputs.wacc}%`, good: totals.irr > inputs.wacc/100 },
+        { name: "Profitability Index",    value: Number(inputs.principal) > 0 ? (totals.npv + Number(inputs.principal)) / Number(inputs.principal) : 0, fmt: "x", bench: "> 1.0×", good: totals.npv > 0 },
+        { name: "Payback Period",         value: totals.payback >= 0 ? totals.payback + 1 : 99,  fmt: "yrs",   bench: "< 7 yrs", good: totals.payback >= 0 && totals.payback < 6 },
+        { name: "ROI",                    value: totals.roi,                                     fmt: "pct",   bench: "> 0%",  good: totals.roi > 0 },
+      ],
+    },
+  ];
+
+  const fmtVal = (v, fmt) => {
+    if (fmt === "pct")   return `${v.toFixed(1)}%`;
+    if (fmt === "x")     return `${v.toFixed(2)}×`;
+    if (fmt === "days")  return `${v.toFixed(0)} days`;
+    if (fmt === "yrs")   return v >= 99 ? ">10 yrs" : `${v.toFixed(0)} yrs`;
+    if (fmt === "money") return fmtK(v);
+    return v.toFixed(2);
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontFamily:"var(--serif)", fontSize:24, color:"var(--ink)", marginBottom:4 }}>Financial Ratios</div>
+        <div style={{ fontSize:13, color:"var(--ink3)" }}>Comprehensive ratio analysis derived from your investment parameters · Green = meets benchmark</div>
+      </div>
+
+      {ratioGroups.map(group => (
+        <div className="acard fade-up" key={group.group} style={{ marginBottom: 16 }}>
+          <div className="acard-header">
+            <span className="acard-title" style={{ color: group.color }}>{group.group}</span>
+          </div>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th style={{ textAlign:"left" }}>Ratio</th>
+                <th>Value</th>
+                <th>Benchmark</th>
+                <th>Status</th>
+                <th>Assessment</th>
+              </tr>
+            </thead>
+            <tbody>
+              {group.ratios.map(r => (
+                <tr key={r.name}>
+                  <td style={{ textAlign:"left", fontWeight:500 }}>{r.name}</td>
+                  <td style={{ fontWeight:700, color: r.good ? "var(--emerald)" : "var(--red)" }}>
+                    {fmtVal(r.value, r.fmt)}
+                  </td>
+                  <td style={{ color:"var(--ink3)", fontSize:12 }}>{r.bench}</td>
+                  <td>
+                    <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 8px", borderRadius:3, fontSize:11, fontWeight:700,
+                      background: r.good ? "var(--emerald-l)" : "#fde8e8",
+                      color: r.good ? "var(--emerald)" : "var(--red)" }}>
+                      {r.good ? "✓ Good" : "✗ Review"}
+                    </span>
+                  </td>
+                  <td style={{ fontSize:12, color:"var(--ink3)" }}>
+                    {r.good ? "Within healthy range" : "Below target — consider optimising"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   DUPONT ANALYSIS TAB
+══════════════════════════════════════════════════════════════════════ */
+function DuPontTab({ inputs, totals, schedule }) {
+  const { fmtK } = useFmt();
+  const lastYr     = schedule[schedule.length - 1] || {};
+  const revenue    = (lastYr.balance || 0) * 0.18;
+  const netInc     = revenue * 0.09;
+  const totalAssets = lastYr.balance || 1;
+  const equity     = totalAssets * 0.55;
+  const debt       = totalAssets * 0.45;
+  const ebit       = revenue * 0.14;
+  const interest   = Number(inputs.principal) * 0.055;
+  const ebt        = ebit - interest;
+  const tax        = Math.max(0, ebt * (Number(inputs.tax) / 100));
+
+  // 3-Factor DuPont: ROE = Net Profit Margin × Asset Turnover × Equity Multiplier
+  const npm   = revenue > 0 ? netInc / revenue : 0;
+  const at    = totalAssets > 0 ? revenue / totalAssets : 0;
+  const em    = equity > 0 ? totalAssets / equity : 0;
+  const roe3  = npm * at * em;
+
+  // 5-Factor DuPont: ROE = Tax Burden × Interest Burden × EBIT Margin × Asset Turnover × Equity Multiplier
+  const taxBurden  = ebt !== 0 ? (ebt - tax) / ebt : 0;
+  const intBurden  = ebit !== 0 ? ebt / ebit : 0;
+  const ebitMargin = revenue > 0 ? ebit / revenue : 0;
+  const roe5 = taxBurden * intBurden * ebitMargin * at * em;
+
+  const box = (label, value, fmt, sub, color = "var(--ink)") => (
+    <div style={{ background:"var(--cream)", border:"1.5px solid var(--border)", borderRadius:10, padding:"14px 16px", textAlign:"center", minWidth:120 }}>
+      <div style={{ fontSize:10, color:"var(--ink3)", textTransform:"uppercase", letterSpacing:"0.6px", marginBottom:5, fontWeight:600 }}>{label}</div>
+      <div style={{ fontFamily:"var(--serif)", fontSize:22, color, fontWeight:700 }}>
+        {fmt === "pct" ? `${(value*100).toFixed(1)}%` : fmt === "x" ? `${value.toFixed(2)}×` : fmtK(value)}
+      </div>
+      {sub && <div style={{ fontSize:10, color:"var(--ink3)", marginTop:3 }}>{sub}</div>}
+    </div>
+  );
+
+  const op = (symbol) => (
+    <div style={{ fontSize:22, color:"var(--ink3)", display:"flex", alignItems:"center", padding:"0 8px" }}>{symbol}</div>
+  );
+
+  return (
+    <div>
+      <div style={{ marginBottom:20 }}>
+        <div style={{ fontFamily:"var(--serif)", fontSize:24, color:"var(--ink)", marginBottom:4 }}>DuPont Analysis</div>
+        <div style={{ fontSize:13, color:"var(--ink3)" }}>Decompose Return on Equity into its underlying drivers</div>
+      </div>
+
+      {/* 3-Factor */}
+      <div className="acard fade-up" style={{ marginBottom:16 }}>
+        <div className="acard-header">
+          <span className="acard-title">3-Factor DuPont Model</span>
+          <span className="acard-sub">ROE = Net Profit Margin × Asset Turnover × Equity Multiplier</span>
+        </div>
+        <div className="acard-body">
+          <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:4, marginBottom:20 }}>
+            {box("Net Profit Margin", npm, "pct", "Profitability", "var(--emerald)")}
+            {op("×")}
+            {box("Asset Turnover", at, "x", "Efficiency", "#1565c0")}
+            {op("×")}
+            {box("Equity Multiplier", em, "x", "Leverage", "#7b1fa2")}
+            {op("=")}
+            {box("ROE", roe3, "pct", "Return on Equity", "var(--gold)")}
+          </div>
+          <table className="data-table">
+            <thead><tr><th style={{textAlign:"left"}}>Factor</th><th>Value</th><th>Formula</th><th>Driver</th><th>Insight</th></tr></thead>
+            <tbody>
+              {[
+                { factor:"Net Profit Margin", value:`${(npm*100).toFixed(1)}%`, formula:"Net Income ÷ Revenue", driver:"Profitability", insight: npm > 0.10 ? "Strong margin — good cost control" : "Margin below 10% — review pricing or costs" },
+                { factor:"Asset Turnover",    value:`${at.toFixed(2)}×`,        formula:"Revenue ÷ Total Assets", driver:"Efficiency", insight: at > 0.5 ? "Efficient use of assets" : "Low asset utilisation — consider optimising asset base" },
+                { factor:"Equity Multiplier", value:`${em.toFixed(2)}×`,        formula:"Total Assets ÷ Equity", driver:"Leverage",  insight: em < 3 ? "Conservative leverage" : "High leverage — monitor debt levels" },
+                { factor:"ROE (3-Factor)",    value:`${(roe3*100).toFixed(1)}%`, formula:"NPM × AT × EM",         driver:"Combined",  insight: roe3 > 0.15 ? "Strong ROE — value being created" : "ROE below 15% target" },
+              ].map(r => (
+                <tr key={r.factor}>
+                  <td style={{textAlign:"left", fontWeight:500}}>{r.factor}</td>
+                  <td style={{fontWeight:700, color:"var(--emerald)"}}>{r.value}</td>
+                  <td style={{color:"var(--ink3)", fontSize:12}}>{r.formula}</td>
+                  <td><span style={{fontSize:11, padding:"2px 7px", borderRadius:3, background:"var(--cream2)", color:"var(--ink2)", fontWeight:600}}>{r.driver}</span></td>
+                  <td style={{fontSize:12, color:"var(--ink2)"}}>{r.insight}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* 5-Factor */}
+      <div className="acard fade-up fade-up-1" style={{ marginBottom:16 }}>
+        <div className="acard-header">
+          <span className="acard-title">5-Factor DuPont Model</span>
+          <span className="acard-sub">ROE = Tax Burden × Interest Burden × EBIT Margin × Asset Turnover × Equity Multiplier</span>
+        </div>
+        <div className="acard-body">
+          <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:4, marginBottom:20 }}>
+            {box("Tax Burden", taxBurden, "x", "(1 - tax rate)", "#c8960c")}
+            {op("×")}
+            {box("Interest Burden", intBurden, "x", "EBT ÷ EBIT", "#e65100")}
+            {op("×")}
+            {box("EBIT Margin", ebitMargin, "pct", "Operating margin", "#0d7a55")}
+            {op("×")}
+            {box("Asset Turnover", at, "x", "Efficiency", "#1565c0")}
+            {op("×")}
+            {box("Equity Multiplier", em, "x", "Leverage", "#7b1fa2")}
+            {op("=")}
+            {box("ROE", roe5, "pct", "5-Factor ROE", "var(--gold)")}
+          </div>
+          <table className="data-table">
+            <thead><tr><th style={{textAlign:"left"}}>Factor</th><th>Value</th><th>Formula</th><th>What it measures</th></tr></thead>
+            <tbody>
+              {[
+                { factor:"Tax Burden",       value:`${(taxBurden*100).toFixed(1)}%`, formula:"Net Income ÷ EBT",   what:"How much profit survives after tax" },
+                { factor:"Interest Burden",  value:`${(intBurden*100).toFixed(1)}%`, formula:"EBT ÷ EBIT",         what:"How much operating profit survives interest" },
+                { factor:"EBIT Margin",      value:`${(ebitMargin*100).toFixed(1)}%`,formula:"EBIT ÷ Revenue",      what:"Core operating profitability" },
+                { factor:"Asset Turnover",   value:`${at.toFixed(2)}×`,              formula:"Revenue ÷ Assets",    what:"Revenue generated per unit of asset" },
+                { factor:"Equity Multiplier",value:`${em.toFixed(2)}×`,              formula:"Assets ÷ Equity",     what:"Degree of financial leverage" },
+                { factor:"ROE (5-Factor)",   value:`${(roe5*100).toFixed(1)}%`,      formula:"All 5 multiplied",    what:"Total return attributable to each factor" },
+              ].map(r => (
+                <tr key={r.factor}>
+                  <td style={{textAlign:"left",fontWeight:500}}>{r.factor}</td>
+                  <td style={{fontWeight:700, color:"var(--emerald)"}}>{r.value}</td>
+                  <td style={{color:"var(--ink3)",fontSize:12}}>{r.formula}</td>
+                  <td style={{fontSize:12,color:"var(--ink2)"}}>{r.what}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ROE Waterfall */}
+      <div className="acard fade-up fade-up-2">
+        <div className="acard-header"><span className="acard-title">ROE Driver Waterfall</span></div>
+        <div className="acard-body">
+          <div style={{ fontSize:12, color:"var(--ink3)", marginBottom:12 }}>Each bar shows the contribution of each factor to total ROE</div>
+          {[
+            { label:"Tax Burden",        contribution: taxBurden,                color:"#c8960c" },
+            { label:"× Interest Burden", contribution: taxBurden * intBurden,   color:"#e65100" },
+            { label:"× EBIT Margin",     contribution: taxBurden * intBurden * ebitMargin, color:"#0d7a55" },
+            { label:"× Asset Turnover",  contribution: taxBurden * intBurden * ebitMargin * at, color:"#1565c0" },
+            { label:"× Equity Mult.",    contribution: roe5,                    color:"#7b1fa2" },
+          ].map((f, i, arr) => {
+            const maxVal = Math.max(...arr.map(x => Math.abs(x.contribution)));
+            const w = maxVal > 0 ? (Math.abs(f.contribution) / maxVal) * 100 : 0;
+            return (
+              <div key={f.label} style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+                <div style={{ width:140, fontSize:11, color:"var(--ink2)", textAlign:"right", fontWeight:500 }}>{f.label}</div>
+                <div style={{ flex:1, height:22, background:"var(--cream)", borderRadius:4, overflow:"hidden" }}>
+                  <div style={{ width:`${w}%`, height:"100%", background:f.color, borderRadius:4, transition:"width 0.6s ease", display:"flex", alignItems:"center", justifyContent:"flex-end", paddingRight:6 }}>
+                    {w > 20 && <span style={{ fontSize:10, color:"#fff", fontWeight:700 }}>{(f.contribution*100).toFixed(1)}%</span>}
+                  </div>
+                </div>
+                <div style={{ width:50, fontSize:11, fontWeight:700, color:f.color }}>{(f.contribution*100).toFixed(1)}%</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   INVESTMENT PROPOSAL TAB
+══════════════════════════════════════════════════════════════════════ */
+function ProposalTab({ inputs, totals, schedule, projectName }) {
+  const { fmtK, symbol, code } = useFmt();
+  const today = new Date().toLocaleDateString("en-US", { year:"numeric", month:"long", day:"numeric" });
+  const good  = totals.npv > 0;
+  const lastYr = schedule[schedule.length - 1] || {};
+
+  const sections = [
+    {
+      title: "Executive Summary",
+      content: `This investment proposal analyses the financial viability of "${projectName}". Based on a ${inputs.years}-year projection with an initial investment of ${fmtK(Number(inputs.principal))} and monthly contributions of ${fmtK(Number(inputs.monthly))}, the analysis indicates that the project is ${good ? "financially viable and recommended for approval" : "currently below the required return threshold and requires revision"}.
+      
+The project generates a Net Present Value (NPV) of ${fmtK(totals.npv)} at a discount rate (WACC) of ${inputs.wacc}%, delivering an Internal Rate of Return (IRR) of ${totals.irr ? `${(totals.irr*100).toFixed(1)}%` : "N/A"}${totals.irr && totals.irr > inputs.wacc/100 ? `, which exceeds the cost of capital by ${((totals.irr - inputs.wacc/100)*100).toFixed(1)} percentage points` : ""}. The final projected portfolio value is ${fmtK(totals.finalBalance)}.`,
+    },
+    {
+      title: "Investment Overview",
+      content: null,
+      table: [
+        { label: "Project Name",            value: projectName },
+        { label: "Analysis Date",           value: today },
+        { label: "Currency",                value: code },
+        { label: "Initial Investment",      value: fmtK(Number(inputs.principal)) },
+        { label: "Monthly Contribution",    value: fmtK(Number(inputs.monthly)) },
+        { label: "Annual Return Rate",      value: `${inputs.rate}%` },
+        { label: "Projection Period",       value: `${inputs.years} years` },
+        { label: "Compounding",             value: inputs.compound.charAt(0).toUpperCase() + inputs.compound.slice(1) },
+        { label: "Discount Rate (WACC)",    value: `${inputs.wacc}%` },
+        { label: "Corporate Tax Rate",      value: `${inputs.tax}%` },
+        { label: "Inflation Assumption",    value: `${inputs.inflation}%` },
+      ],
+    },
+    {
+      title: "Financial Results",
+      content: null,
+      table: [
+        { label: "Final Portfolio Value",   value: fmtK(totals.finalBalance),   highlight: true },
+        { label: "Total Capital Invested",  value: fmtK(totals.totalContrib) },
+        { label: "Total Interest Earned",   value: fmtK(totals.totalInterest) },
+        { label: "Inflation-Adjusted Value",value: fmtK(totals.inflationAdj) },
+        { label: "Net Present Value (NPV)", value: fmtK(totals.npv),            highlight: true },
+        { label: "IRR",                     value: totals.irr ? `${(totals.irr*100).toFixed(2)}%` : "N/A", highlight: true },
+        { label: "Return on Investment",    value: `${totals.roi.toFixed(1)}%` },
+        { label: "Payback Period",          value: totals.payback >= 0 ? `${totals.payback+1} years` : ">10 years" },
+        { label: "Profitability Index",     value: Number(inputs.principal) > 0 ? ((totals.npv + Number(inputs.principal)) / Number(inputs.principal)).toFixed(2) + "×" : "N/A" },
+      ],
+    },
+    {
+      title: "Risk Assessment",
+      content: `The following risk factors have been identified for this investment:
+
+• Interest Rate Risk: A 1% increase in WACC would reduce NPV by approximately ${fmtK(Math.abs((totals.npv * 0.08)))}.
+• Market Risk: The assumed annual return of ${inputs.rate}% is subject to market volatility. A Bear scenario (${Number(inputs.rate)-3}% return) would significantly alter outcomes.
+• Inflation Risk: At ${inputs.inflation}% annual inflation, the inflation-adjusted value is ${fmtK(totals.inflationAdj)}, representing a real-terms reduction of ${fmtK(totals.finalBalance - totals.inflationAdj)}.
+• Liquidity Risk: Monthly contributions of ${fmtK(Number(inputs.monthly))} represent an ongoing cash commitment over ${inputs.years} years.`,
+    },
+    {
+      title: "Recommendation",
+      content: good
+        ? `Based on the analysis, this investment is RECOMMENDED FOR APPROVAL. The project demonstrates a positive NPV of ${fmtK(totals.npv)}, indicating value creation above the cost of capital. The IRR of ${totals.irr ? `${(totals.irr*100).toFixed(1)}%` : "N/A"} provides a ${totals.irr && totals.irr > inputs.wacc/100 ? Math.abs(((totals.irr - inputs.wacc/100)*100)).toFixed(1) + "% buffer" : "margin"} above the required return.
+
+Decision: ✅ PROCEED WITH INVESTMENT`
+        : `Based on the analysis, this investment REQUIRES REVISION before approval. The project's current NPV of ${fmtK(totals.npv)} indicates it does not meet the minimum return threshold at the current WACC of ${inputs.wacc}%.
+
+Recommended actions: (1) Review cost structure to improve margins; (2) Negotiate better financing terms to reduce WACC; (3) Explore revenue enhancement opportunities; (4) Consider extending the investment horizon.
+
+Decision: ⚠️ REVISE AND RESUBMIT`,
+    },
+  ];
+
+  return (
+    <div>
+      {/* Report header */}
+      <div className="acard fade-up" style={{ marginBottom:16 }}>
+        <div style={{ background:"var(--ink)", padding:"28px 28px 24px", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+          <div>
+            <div style={{ fontFamily:"var(--serif)", fontSize:11, color:"#7dd3b0", letterSpacing:"1.5px", textTransform:"uppercase", marginBottom:8 }}>Investment Proposal</div>
+            <div style={{ fontFamily:"var(--serif)", fontSize:26, color:"#fff", marginBottom:4 }}>{projectName}</div>
+            <div style={{ fontSize:12, color:"#9ca3b8" }}>Prepared by CapitalIQ · {today}</div>
+          </div>
+          <div style={{ textAlign:"right" }}>
+            <div style={{ display:"inline-flex", alignItems:"center", gap:8, background: good ? "rgba(13,122,85,0.2)" : "rgba(192,57,43,0.2)", padding:"8px 16px", borderRadius:6, border: `1px solid ${good ? "#0d7a55" : "#c0392b"}` }}>
+              <span style={{ fontSize:18 }}>{good ? "✅" : "⚠️"}</span>
+              <div>
+                <div style={{ fontSize:13, fontWeight:700, color: good ? "#7dd3b0" : "#f87171" }}>{good ? "RECOMMENDED" : "NEEDS REVISION"}</div>
+                <div style={{ fontSize:10, color:"#9ca3b8" }}>NPV: {fmtK(totals.npv)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Key metrics strip */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", borderTop:"1px solid var(--border)" }}>
+          {[
+            { label:"Final Value",  value: fmtK(totals.finalBalance), color:"var(--emerald)" },
+            { label:"NPV",          value: fmtK(totals.npv),          color: good ? "var(--emerald)" : "var(--red)" },
+            { label:"IRR",          value: totals.irr ? `${(totals.irr*100).toFixed(1)}%` : "N/A", color:"var(--ink)" },
+            { label:"Payback",      value: totals.payback >= 0 ? `${totals.payback+1} yrs` : ">10y", color:"var(--ink)" },
+          ].map((k,i) => (
+            <div key={k.label} style={{ padding:"16px 20px", borderRight: i<3 ? "1px solid var(--border)" : "none" }}>
+              <div style={{ fontSize:10, color:"var(--ink3)", textTransform:"uppercase", letterSpacing:"0.6px", marginBottom:4, fontWeight:600 }}>{k.label}</div>
+              <div style={{ fontFamily:"var(--serif)", fontSize:20, color:k.color, fontWeight:700 }}>{k.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Report sections */}
+      {sections.map((sec, i) => (
+        <div className="acard fade-up" key={sec.title} style={{ marginBottom:12, animationDelay:`${i*0.06}s` }}>
+          <div className="acard-header">
+            <span style={{ fontSize:11, color:"var(--ink3)", fontWeight:700, letterSpacing:"0.8px", textTransform:"uppercase" }}>
+              {String(i+1).padStart(2,"0")} — {sec.title}
+            </span>
+          </div>
+          <div className="acard-body">
+            {sec.content && (
+              <div style={{ fontSize:13, color:"var(--ink2)", lineHeight:1.7, whiteSpace:"pre-line" }}>{sec.content}</div>
+            )}
+            {sec.table && (
+              <table className="data-table">
+                <tbody>
+                  {sec.table.map(r => (
+                    <tr key={r.label} style={{ background: r.highlight ? "var(--emerald-l)" : "transparent" }}>
+                      <td style={{ textAlign:"left", fontWeight:500, color: r.highlight ? "var(--emerald)" : "var(--ink2)", width:"50%" }}>{r.label}</td>
+                      <td style={{ fontWeight: r.highlight ? 700 : 400, color: r.highlight ? "var(--emerald)" : "var(--ink)" }}>{r.value}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      ))}
+
+      {/* Print hint */}
+      <div style={{ textAlign:"center", padding:"20px 0", fontSize:12, color:"var(--ink3)" }}>
+        💡 To save as PDF: press <strong>Cmd+P</strong> (Mac) or <strong>Ctrl+P</strong> (Windows) → "Save as PDF"
+      </div>
+    </div>
+  );
+}
+
 const SCENARIO_PRESETS = {
   Base:   { rate: 7,  monthly: 500,  wacc: 10, principal: 10000, years: 20 },
   Bull:   { rate: 11, monthly: 750,  wacc: 8,  principal: 15000, years: 25 },
@@ -1505,12 +1887,15 @@ function AppScreen({ onBack, currencyCode, setCurrencyCode, project, onSave }) {
   const { schedule, totals } = useMemo(() => calcSchedule(inputs), [inputs]);
 
   const TABS = [
-    { id: "calculator", label: "Calculator" },
-    { id: "scenarios",  label: "Scenarios" },
-    { id: "dcf",        label: "DCF / IRR" },
-    { id: "schedule",   label: "Schedule" },
-    { id: "sensitivity",label: "Sensitivity" },
-    { id: "charts",     label: "Charts" },
+    { id: "calculator",  label: "Calculator" },
+    { id: "scenarios",   label: "Scenarios" },
+    { id: "dcf",         label: "DCF / IRR" },
+    { id: "ratios",      label: "Fin. Ratios" },
+    { id: "dupont",      label: "DuPont" },
+    { id: "schedule",    label: "Schedule" },
+    { id: "sensitivity", label: "Sensitivity" },
+    { id: "charts",      label: "Charts" },
+    { id: "proposal",    label: "Proposal" },
   ];
 
   return (
@@ -1548,12 +1933,15 @@ function AppScreen({ onBack, currencyCode, setCurrencyCode, project, onSave }) {
       </div>
 
       <div className="app-body">
-        {appTab === "calculator"  && <CalcTab   inputs={inputs} setI={setI} totals={totals} schedule={schedule} />}
-        {appTab === "scenarios"   && <ScenTab   inputs={inputs} applyScenario={applyScenario} scenario={scenario} />}
-        {appTab === "dcf"         && <DCFTab2   totals={totals} schedule={schedule} inputs={inputs} />}
-        {appTab === "schedule"    && <SchedTab2 schedule={schedule} />}
-        {appTab === "sensitivity" && <SensTab2  inputs={inputs} />}
+        {appTab === "calculator"  && <CalcTab    inputs={inputs} setI={setI} totals={totals} schedule={schedule} />}
+        {appTab === "scenarios"   && <ScenTab    inputs={inputs} applyScenario={applyScenario} scenario={scenario} />}
+        {appTab === "dcf"         && <DCFTab2    totals={totals} schedule={schedule} inputs={inputs} />}
+        {appTab === "ratios"      && <RatiosTab  inputs={inputs} totals={totals} schedule={schedule} />}
+        {appTab === "dupont"      && <DuPontTab  inputs={inputs} totals={totals} schedule={schedule} />}
+        {appTab === "schedule"    && <SchedTab2  schedule={schedule} />}
+        {appTab === "sensitivity" && <SensTab2   inputs={inputs} />}
         {appTab === "charts"      && <ChartsTab2 schedule={schedule} />}
+        {appTab === "proposal"    && <ProposalTab inputs={inputs} totals={totals} schedule={schedule} projectName={projectName} />}
       </div>
     </div>
   );
