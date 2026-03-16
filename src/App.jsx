@@ -404,7 +404,17 @@ const GlobalStyles = () => (
     .fade-up-3 { animation-delay: 0.24s; }
     .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--emerald); display: inline-block; animation: pulse 2s infinite; }
 
-    @media (max-width: 900px) {
+    @media print {
+      .app-topbar, .app-tabs, .no-print { display: none !important; }
+      .app-screen { padding-top: 0 !important; }
+      .app-body { padding: 0 !important; max-width: 100% !important; }
+      .acard { break-inside: avoid; box-shadow: none !important; border: 1px solid #ddd !important; margin-bottom: 12px !important; }
+      body { background: white !important; }
+      .fade-up { animation: none !important; }
+      @page { margin: 15mm; size: A4; }
+      .print-header { display: block !important; }
+    }
+    .print-header { display: none; }
       .hero { flex-direction: column; padding: 100px 20px 60px; gap: 40px; }
       .hero-right { flex: none; width: 100%; }
       .problem-grid, .features-grid, .pricing-grid, .testi-grid { grid-template-columns: 1fr; }
@@ -485,7 +495,7 @@ function calcSchedule(inputs) {
     const yearGrowth = bal - ys;
     const fcf = yearGrowth * 0.6 * (1 - 0.21);
     npvAcc += fcf / Math.pow(1+disc, y);
-    sched.push({ year: y, balance: Math.round(bal), contributions: Math.round(contrib), interest: Math.round(bal-contrib), inflationAdj: Math.round(bal/Math.pow(1+inf,y)), fcf: Math.round(fcf), cumNPV: Math.round(npvAcc) });
+    sched.push({ year: y, balance: Math.round(bal), contributions: Math.round(contrib), interest: Math.round(bal-contrib), inflationAdj: Math.round(bal/Math.pow(1+inf,y)), yearGrowth: Math.round(yearGrowth), fcf: Math.round(fcf), cumNPV: Math.round(npvAcc) });
   }
   const last = sched[sched.length-1] || {};
   const allFCF = [-Number(principal), ...sched.map(r => r.fcf)];
@@ -1920,7 +1930,15 @@ function AppScreen({ onBack, currencyCode, setCurrencyCode, project, onSave }) {
             color: saved ? "var(--emerald)" : "#fff" }}>
           {saved ? "✓ Saved" : "Save"}
         </button>
-        <button className="nav-cta" style={{ fontSize:12, padding:"7px 14px" }}>↓ PDF</button>
+        <button onClick={() => {
+            // Switch to proposal tab for best print output, then print
+            setAppTab("proposal");
+            setTimeout(() => window.print(), 300);
+          }}
+          style={{ padding:"7px 16px", borderRadius:6, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"var(--sans)", border:"1px solid var(--border)", background:"var(--cream)", color:"var(--ink)", transition:"all 0.15s", display:"flex", alignItems:"center", gap:6 }}
+          title="Export as PDF">
+          📄 PDF
+        </button>
         <button className="nav-cta" style={{ fontSize:12, padding:"7px 14px", background:"var(--ink2)" }}>↓ Excel</button>
       </div>
 
@@ -1933,6 +1951,11 @@ function AppScreen({ onBack, currencyCode, setCurrencyCode, project, onSave }) {
       </div>
 
       <div className="app-body">
+        {/* Print-only header */}
+        <div className="print-header" style={{ marginBottom:16, paddingBottom:12, borderBottom:"2px solid #0d7a55" }}>
+          <div style={{ fontFamily:"var(--serif)", fontSize:22, color:"#0f1117" }}>CapitalIQ — Investment Report</div>
+          <div style={{ fontSize:13, color:"#8a8fa8", marginTop:4 }}>{projectName} · {new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</div>
+        </div>
         {appTab === "calculator"  && <CalcTab    inputs={inputs} setI={setI} totals={totals} schedule={schedule} />}
         {appTab === "scenarios"   && <ScenTab    inputs={inputs} applyScenario={applyScenario} scenario={scenario} />}
         {appTab === "dcf"         && <DCFTab2    totals={totals} schedule={schedule} inputs={inputs} />}
