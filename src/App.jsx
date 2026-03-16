@@ -760,71 +760,185 @@ const AuthStyles = () => (
 );
 
 /* ══════════════════════════════════════════════════════════════════════
-   MAIN APP  —  screens: landing | login | signup | forgot | dashboard | app
+   SUPABASE CONFIG  —  replace with your own keys
+══════════════════════════════════════════════════════════════════════ */
+const SUPABASE_URL      = https://zbluszpcsztpzoskzkiz.supabase.co;
+const SUPABASE_ANON_KEY = sb_publishable_-amT-RfNBnJHgM7M-UNPVg_WEtnxFK6;
+
+// Minimal Supabase client (no npm package needed)
+const sb = (() => {
+  const headers = { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` };
+
+  const authHeaders = (token) => ({ ...headers, 'Authorization': `Bearer ${token}` });
+
+  return {
+    auth: {
+      async signUp({ email, password, name }) {
+        const r = await fetch(`${SUPABASE_URL}/auth/v1/signup`, { method:'POST', headers, body: JSON.stringify({ email, password, data: { full_name: name } }) });
+        return r.json();
+      },
+      async signIn({ email, password }) {
+        const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, { method:'POST', headers, body: JSON.stringify({ email, password }) });
+        return r.json();
+      },
+      async signInWithGoogle() {
+        window.location.href = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${window.location.origin}`;
+      },
+      async resetPassword(email) {
+        const r = await fetch(`${SUPABASE_URL}/auth/v1/recover`, { method:'POST', headers, body: JSON.stringify({ email }) });
+        return r.json();
+      },
+      async signOut(token) {
+        await fetch(`${SUPABASE_URL}/auth/v1/logout`, { method:'POST', headers: authHeaders(token) });
+      },
+      async getUser(token) {
+        const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: authHeaders(token) });
+        return r.json();
+      },
+    },
+    db: {
+      async getProjects(token) {
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/projects?select=*&order=updated_at.desc`, { headers: authHeaders(token) });
+        return r.json();
+      },
+      async createProject(token, data) {
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/projects`, { method:'POST', headers: { ...authHeaders(token), 'Prefer': 'return=representation' }, body: JSON.stringify(data) });
+        const json = await r.json();
+        return Array.isArray(json) ? json[0] : json;
+      },
+      async updateProject(token, id, data) {
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/projects?id=eq.${id}`, { method:'PATCH', headers: { ...authHeaders(token), 'Prefer': 'return=representation' }, body: JSON.stringify({ ...data, updated_at: new Date().toISOString() }) });
+        const json = await r.json();
+        return Array.isArray(json) ? json[0] : json;
+      },
+      async deleteProject(token, id) {
+        await fetch(`${SUPABASE_URL}/rest/v1/projects?id=eq.${id}`, { method:'DELETE', headers: authHeaders(token) });
+      },
+    },
+  };
+})();
+
+// Helper: parse Supabase session from URL hash (after Google OAuth redirect)
+function parseSessionFromHash() {
+  const hash = window.location.hash;
+  if (!hash) return null;
+  const params = new URLSearchParams(hash.replace('#', ''));
+  const token = params.get('access_token');
+  if (!token) return null;
+  window.history.replaceState(null, '', window.location.pathname);
+  return { access_token: token, token_type: params.get('token_type') };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MAIN APP
 ══════════════════════════════════════════════════════════════════════ */
 export default function App() {
-  const [screen, setScreen]       = useState("landing");
+  const [screen, setScreen]             = useState("landing");
   const [currencyCode, setCurrencyCode] = useState("USD");
-  const [user, setUser]           = useState(null);   // { name, email }
-  const [projects, setProjects]   = useState([
-    { id: 1, name: "New Warehouse Investment", date: "Mar 12, 2025", npv: 284000, irr: 14.2, finalValue: 1240000, status: "active",  inputs: { principal:50000, monthly:2000, rate:9,  years:15, compound:"monthly", inflation:2.5, wacc:10, tax:21 } },
-    { id: 2, name: "Solar Panel Array",         date: "Mar 8, 2025",  npv: 91000,  irr: 11.1, finalValue: 620000,  status: "active",  inputs: { principal:30000, monthly:1000, rate:8,  years:20, compound:"monthly", inflation:2,   wacc:9,  tax:21 } },
-    { id: 3, name: "Office Expansion",           date: "Feb 28, 2025", npv: -12000, irr: 7.4,  finalValue: 390000,  status: "draft",   inputs: { principal:80000, monthly:500,  rate:6,  years:10, compound:"monthly", inflation:3,   wacc:11, tax:21 } },
-  ]);
+  const [session, setSession]           = useState(null);   // { access_token, user: { id, email, name } }
+  const [projects, setProjects]         = useState([]);
+  const [projLoading, setProjLoading]   = useState(false);
   const [activeProject, setActiveProject] = useState(null);
   const [showNewModal, setShowNewModal]   = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
 
   const cur = CURRENCIES.find(c => c.code === currencyCode) || CURRENCIES[0];
 
-  const handleLogin  = (userData) => { setUser(userData); setScreen("dashboard"); };
-  const handleSignup = (userData) => { setUser(userData); setScreen("dashboard"); };
-  const handleLogout = () => { setUser(null); setScreen("landing"); };
+  // On mount: check for OAuth redirect or stored session
+  useEffect(() => {
+    const oauthSession = parseSessionFromHash();
+    if (oauthSession) {
+      sb.auth.getUser(oauthSession.access_token).then(user => {
+        if (user?.id) {
+          const sess = { access_token: oauthSession.access_token, user: { id: user.id, email: user.email, name: user.user_metadata?.full_name || user.email.split('@')[0] } };
+          setSession(sess);
+          localStorage.setItem('ciq_session', JSON.stringify(sess));
+          setScreen("dashboard");
+        }
+      });
+      return;
+    }
+    const stored = localStorage.getItem('ciq_session');
+    if (stored) {
+      try {
+        const sess = JSON.parse(stored);
+        sb.auth.getUser(sess.access_token).then(user => {
+          if (user?.id) { setSession(sess); setScreen("dashboard"); }
+          else localStorage.removeItem('ciq_session');
+        });
+      } catch { localStorage.removeItem('ciq_session'); }
+    }
+  }, []);
 
-  const openProject = (project) => {
-    setActiveProject(project);
-    setScreen("app");
+  // Load projects when session changes
+  useEffect(() => {
+    if (!session) return;
+    setProjLoading(true);
+    sb.db.getProjects(session.access_token).then(data => {
+      if (Array.isArray(data)) {
+        setProjects(data.map(p => ({
+          id: p.id, name: p.name, status: p.status,
+          npv: p.npv || 0, irr: p.irr || 0, finalValue: p.final_value || 0,
+          date: new Date(p.updated_at).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }),
+          inputs: p.inputs || { principal:10000, monthly:500, rate:7, years:20, compound:"monthly", inflation:2, wacc:10, tax:21 },
+        })));
+      }
+      setProjLoading(false);
+    });
+  }, [session]);
+
+  const handleLogin = (sess) => {
+    setSession(sess);
+    localStorage.setItem('ciq_session', JSON.stringify(sess));
+    setScreen("dashboard");
   };
 
-  const createProject = () => {
-    if (!newProjectName.trim()) return;
-    const newProj = {
-      id: Date.now(),
-      name: newProjectName.trim(),
-      date: new Date().toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }),
-      npv: 0, irr: 0, finalValue: 0, status: "draft",
-      inputs: { principal:10000, monthly:500, rate:7, years:20, compound:"monthly", inflation:2, wacc:10, tax:21 },
-    };
-    setProjects(p => [...p, newProj]);
-    setNewProjectName("");
-    setShowNewModal(false);
-    openProject(newProj);
+  const handleLogout = async () => {
+    if (session) await sb.auth.signOut(session.access_token);
+    localStorage.removeItem('ciq_session');
+    setSession(null);
+    setProjects([]);
+    setScreen("landing");
   };
 
-  const deleteProject = (id) => setProjects(p => p.filter(pr => pr.id !== id));
+  const openProject = (project) => { setActiveProject(project); setScreen("app"); };
 
-  const saveProject = (id, updatedInputs, updatedTotals) => {
-    setProjects(p => p.map(pr => pr.id === id ? {
-      ...pr,
-      inputs: updatedInputs,
-      npv: updatedTotals.npv,
-      irr: updatedTotals.irr ? updatedTotals.irr * 100 : pr.irr,
-      finalValue: updatedTotals.finalBalance,
-      status: "active",
-      date: new Date().toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }),
-    } : pr));
+  const createProject = async () => {
+    if (!newProjectName.trim() || !session) return;
+    const data = { user_id: session.user.id, name: newProjectName.trim(), inputs: { principal:10000, monthly:500, rate:7, years:20, compound:"monthly", inflation:2, wacc:10, tax:21 }, npv:0, irr:0, final_value:0, status:"draft" };
+    const created = await sb.db.createProject(session.access_token, data);
+    if (created?.id) {
+      const proj = { id:created.id, name:created.name, status:"draft", npv:0, irr:0, finalValue:0, date:"Just now", inputs: data.inputs };
+      setProjects(p => [proj, ...p]);
+      setNewProjectName("");
+      setShowNewModal(false);
+      openProject(proj);
+    }
+  };
+
+  const deleteProject = async (id) => {
+    if (!session) return;
+    await sb.db.deleteProject(session.access_token, id);
+    setProjects(p => p.filter(pr => pr.id !== id));
+  };
+
+  const saveProject = async (id, updatedInputs, updatedTotals) => {
+    if (!session) return;
+    const data = { inputs: updatedInputs, npv: updatedTotals.npv, irr: updatedTotals.irr ? updatedTotals.irr * 100 : 0, final_value: updatedTotals.finalBalance, status:"active" };
+    await sb.db.updateProject(session.access_token, id, data);
+    setProjects(p => p.map(pr => pr.id === id ? { ...pr, ...data, finalValue: data.final_value, date:"Just now" } : pr));
   };
 
   return (
     <CurrencyContext.Provider value={cur}>
       <GlobalStyles />
       <AuthStyles />
-      {screen === "landing"   && <LandingPage   onLaunch={() => setScreen("login")} />}
-      {screen === "login"     && <LoginPage     onLogin={handleLogin}  onSignup={() => setScreen("signup")} onForgot={() => setScreen("forgot")} onBack={() => setScreen("landing")} />}
-      {screen === "signup"    && <SignupPage    onSignup={handleSignup} onLogin={() => setScreen("login")}  onBack={() => setScreen("landing")} />}
-      {screen === "forgot"    && <ForgotPage   onBack={() => setScreen("login")} />}
-      {screen === "dashboard" && <Dashboard    user={user} projects={projects} onOpen={openProject} onDelete={deleteProject} onLogout={handleLogout} onNew={() => setShowNewModal(true)} currencyCode={currencyCode} setCurrencyCode={setCurrencyCode} />}
-      {screen === "app"       && <AppScreen    onBack={() => setScreen("dashboard")} currencyCode={currencyCode} setCurrencyCode={setCurrencyCode} project={activeProject} onSave={saveProject} />}
+      {screen === "landing"   && <LandingPage onLaunch={() => setScreen("login")} />}
+      {screen === "login"     && <LoginPage   onLogin={handleLogin} onSignup={() => setScreen("signup")} onForgot={() => setScreen("forgot")} onBack={() => setScreen("landing")} />}
+      {screen === "signup"    && <SignupPage  onLogin={handleLogin} onSignin={() => setScreen("login")} onBack={() => setScreen("landing")} />}
+      {screen === "forgot"    && <ForgotPage  onBack={() => setScreen("login")} />}
+      {screen === "dashboard" && <Dashboard   session={session} projects={projects} loading={projLoading} onOpen={openProject} onDelete={deleteProject} onLogout={handleLogout} onNew={() => setShowNewModal(true)} currencyCode={currencyCode} setCurrencyCode={setCurrencyCode} />}
+      {screen === "app"       && <AppScreen   onBack={() => setScreen("dashboard")} currencyCode={currencyCode} setCurrencyCode={setCurrencyCode} project={activeProject} onSave={saveProject} />}
       {showNewModal && (
         <div className="modal-overlay" onClick={() => setShowNewModal(false)}>
           <div className="modal-box" onClick={e => e.stopPropagation()}>
@@ -834,8 +948,7 @@ export default function App() {
               <label>Project Name</label>
               <input className="auth-input" placeholder="e.g. Factory Expansion 2025" value={newProjectName}
                 onChange={e => setNewProjectName(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && createProject()}
-                autoFocus />
+                onKeyDown={e => e.key === "Enter" && createProject()} autoFocus />
             </div>
             <div className="modal-actions">
               <button className="modal-cancel" onClick={() => setShowNewModal(false)}>Cancel</button>
@@ -856,19 +969,28 @@ function LoginPage({ onLogin, onSignup, onForgot, onBack }) {
   const [password, setPassword] = useState("");
   const [showPw, setShowPw]     = useState(false);
   const [loading, setLoading]   = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError]       = useState("");
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     setError("");
     if (!email || !password) { setError("Please fill in all fields."); return; }
     if (!email.includes("@")) { setError("Please enter a valid email address."); return; }
     if (password.length < 6)  { setError("Password must be at least 6 characters."); return; }
     setLoading(true);
-    // Simulate API call — replace with Supabase: supabase.auth.signInWithPassword({ email, password })
-    setTimeout(() => {
-      setLoading(false);
-      onLogin({ name: email.split("@")[0], email });
-    }, 1200);
+    const data = await sb.auth.signIn({ email, password });
+    setLoading(false);
+    if (data.error || !data.access_token) {
+      setError(data.error?.message || data.msg || "Invalid email or password.");
+      return;
+    }
+    const user = await sb.auth.getUser(data.access_token);
+    onLogin({ access_token: data.access_token, user: { id: user.id, email: user.email, name: user.user_metadata?.full_name || user.email.split('@')[0] } });
+  };
+
+  const handleGoogle = () => {
+    setGoogleLoading(true);
+    sb.auth.signInWithGoogle();
   };
 
   return (
@@ -881,9 +1003,9 @@ function LoginPage({ onLogin, onSignup, onForgot, onBack }) {
           <div className="auth-features">
             {[
               { icon: "📊", title: "Save unlimited projects", desc: "All your investment analyses in one place" },
-              { icon: "🔄", title: "Sync across devices", desc: "Access from laptop, phone or tablet" },
-              { icon: "👥", title: "Share with your team", desc: "Collaborate on investment decisions together" },
-              { icon: "📄", title: "Export PDF reports", desc: "Board-ready reports in one click" },
+              { icon: "🔄", title: "Sync across devices",     desc: "Access from laptop, phone or tablet" },
+              { icon: "👥", title: "Share with your team",    desc: "Collaborate on investment decisions together" },
+              { icon: "📄", title: "Export PDF reports",      desc: "Board-ready reports in one click" },
             ].map(f => (
               <div className="auth-feature" key={f.title}>
                 <div className="auth-feature-icon">{f.icon}</div>
@@ -895,21 +1017,27 @@ function LoginPage({ onLogin, onSignup, onForgot, onBack }) {
       </div>
 
       <div className="auth-right">
-        <div className="auth-form-logo">
-          <div className="auth-form-logo-dot" />
-          Capital<span>IQ</span>
-        </div>
+        <div className="auth-form-logo"><div className="auth-form-logo-dot" />Capital<span>IQ</span></div>
         <div className="auth-title">Welcome back</div>
         <div className="auth-title-sub">Sign in to your account to continue</div>
 
         {error && <div className="auth-error">⚠ {error}</div>}
 
+        {/* Google */}
+        <button onClick={handleGoogle} disabled={googleLoading}
+          style={{ width:"100%", padding:"11px", border:"1.5px solid var(--border)", borderRadius:8, background:"#fff", fontFamily:"var(--sans)", fontSize:14, fontWeight:500, cursor:"pointer", color:"var(--ink)", display:"flex", alignItems:"center", justifyContent:"center", gap:10, marginBottom:16, transition:"all 0.15s" }}
+          onMouseEnter={e => e.currentTarget.style.borderColor="var(--ink)"}
+          onMouseLeave={e => e.currentTarget.style.borderColor="var(--border)"}>
+          <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.35-8.16 2.35-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+          {googleLoading ? "Redirecting..." : "Continue with Google"}
+        </button>
+
+        <div className="auth-divider"><span className="auth-divider-text">or sign in with email</span></div>
+
         <div className="auth-field">
           <label>Email address</label>
-          <input className={`auth-input ${error && !email ? "error" : ""}`}
-            type="email" placeholder="you@company.com"
-            value={email} onChange={e => setEmail(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+          <input className={`auth-input ${error && !email ? "error" : ""}`} type="email" placeholder="you@company.com"
+            value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} />
         </div>
 
         <div className="auth-field">
@@ -918,14 +1046,9 @@ function LoginPage({ onLogin, onSignup, onForgot, onBack }) {
             <span onClick={onForgot} style={{ fontSize:12, color:"var(--emerald)", cursor:"pointer", fontWeight:600 }}>Forgot password?</span>
           </div>
           <div className="auth-password-wrap">
-            <input className={`auth-input ${error && !password ? "error" : ""}`}
-              type={showPw ? "text" : "password"} placeholder="••••••••"
-              value={password} onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && handleSubmit()}
-              style={{ paddingRight: 40 }} />
-            <button className="auth-password-toggle" onClick={() => setShowPw(p => !p)}>
-              {showPw ? "Hide" : "Show"}
-            </button>
+            <input className="auth-input" type={showPw ? "text" : "password"} placeholder="••••••••"
+              value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} style={{ paddingRight:40 }} />
+            <button className="auth-password-toggle" onClick={() => setShowPw(p => !p)}>{showPw ? "Hide" : "Show"}</button>
           </div>
         </div>
 
@@ -933,18 +1056,8 @@ function LoginPage({ onLogin, onSignup, onForgot, onBack }) {
           {loading ? "" : "Sign in →"}
         </button>
 
-        <div className="auth-divider"><span className="auth-divider-text">or continue with</span></div>
-
-        <button onClick={() => { setLoading(true); setTimeout(() => { setLoading(false); onLogin({ name: "Demo User", email: "demo@capitaliq.io" }); }, 800); }}
-          style={{ width:"100%", padding:"11px", border:"1.5px solid var(--border)", borderRadius:8, background:"#fff", fontFamily:"var(--sans)", fontSize:14, fontWeight:500, cursor:"pointer", color:"var(--ink)", display:"flex", alignItems:"center", justifyContent:"center", gap:8, transition:"all 0.15s" }}
-          onMouseEnter={e => e.currentTarget.style.borderColor = "var(--ink)"}
-          onMouseLeave={e => e.currentTarget.style.borderColor = "var(--border)"}>
-          ⚡ Continue with Demo Account
-        </button>
-
-        <div className="auth-switch">
-          Don't have an account? <a onClick={onSignup}>Create one free →</a>
-        </div>
+        <div className="auth-switch">Don't have an account? <a onClick={onSignup}>Create one free →</a></div>
+        <div className="auth-switch" style={{ marginTop:8 }}><a onClick={onBack} style={{ color:"var(--ink3)" }}>← Back to home</a></div>
       </div>
     </div>
   );
@@ -953,32 +1066,50 @@ function LoginPage({ onLogin, onSignup, onForgot, onBack }) {
 /* ══════════════════════════════════════════════════════════════════════
    SIGNUP PAGE
 ══════════════════════════════════════════════════════════════════════ */
-function SignupPage({ onSignup, onLogin, onBack }) {
+function SignupPage({ onLogin, onSignin, onBack }) {
   const [name, setName]         = useState("");
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm]   = useState("");
   const [showPw, setShowPw]     = useState(false);
   const [loading, setLoading]   = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError]       = useState("");
+  const [success, setSuccess]   = useState(false);
 
   const strength = password.length === 0 ? 0 : password.length < 6 ? 1 : password.length < 10 ? 2 : /[A-Z]/.test(password) && /[0-9]/.test(password) ? 4 : 3;
   const strengthLabel = ["", "Weak", "Fair", "Good", "Strong"];
   const strengthColor = ["", "var(--red)", "var(--gold)", "var(--emerald)", "var(--emerald)"];
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     setError("");
-    if (!name.trim())             { setError("Please enter your name."); return; }
-    if (!email.includes("@"))     { setError("Please enter a valid email address."); return; }
-    if (password.length < 6)      { setError("Password must be at least 6 characters."); return; }
-    if (password !== confirm)     { setError("Passwords do not match."); return; }
+    if (!name.trim())         { setError("Please enter your name."); return; }
+    if (!email.includes("@")) { setError("Please enter a valid email address."); return; }
+    if (password.length < 6)  { setError("Password must be at least 6 characters."); return; }
+    if (password !== confirm)  { setError("Passwords do not match."); return; }
     setLoading(true);
-    // Replace with: supabase.auth.signUp({ email, password, options: { data: { name } } })
-    setTimeout(() => {
-      setLoading(false);
-      onSignup({ name: name.trim(), email });
-    }, 1400);
+    const data = await sb.auth.signUp({ email, password, name: name.trim() });
+    setLoading(false);
+    if (data.error) { setError(data.error.message || "Sign up failed. Please try again."); return; }
+    if (data.access_token) {
+      const user = await sb.auth.getUser(data.access_token);
+      onLogin({ access_token: data.access_token, user: { id: user.id, email: user.email, name: name.trim() } });
+    } else {
+      setSuccess(true);
+    }
   };
+
+  const handleGoogle = () => { setGoogleLoading(true); sb.auth.signInWithGoogle(); };
+
+  if (success) return (
+    <div className="auth-wrap" style={{ justifyContent:"center" }}>
+      <div className="auth-right" style={{ width:"100%", maxWidth:480 }}>
+        <div className="auth-form-logo"><div className="auth-form-logo-dot" />Capital<span>IQ</span></div>
+        <div className="auth-success">✓ Check your email! We sent a confirmation link to <strong>{email}</strong>.</div>
+        <button className="auth-btn" onClick={onSignin} style={{ marginTop:16 }}>Back to sign in →</button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="auth-wrap">
@@ -986,13 +1117,13 @@ function SignupPage({ onSignup, onLogin, onBack }) {
         <div className="auth-left-content">
           <div className="auth-brand">Capital<span>IQ</span></div>
           <div className="auth-tagline">Start making<br /><em>smarter decisions</em><br />today.</div>
-          <div className="auth-sub">Join hundreds of businesses who use CapitalIQ to analyse investments, reduce risk, and grow with confidence.</div>
+          <div className="auth-sub">Join businesses who use CapitalIQ to analyse investments, reduce risk, and grow with confidence.</div>
           <div className="auth-features">
             {[
-              { icon: "🆓", title: "Free first project", desc: "No credit card required to get started" },
-              { icon: "⚡", title: "Ready in 60 seconds", desc: "Sign up and run your first analysis immediately" },
-              { icon: "🔒", title: "Bank-grade security", desc: "Your data is encrypted and never shared" },
-              { icon: "📈", title: "Proven methodology", desc: "Based on Goldman Sachs-standard DCF models" },
+              { icon: "🆓", title: "Free to start",         desc: "No credit card required" },
+              { icon: "⚡", title: "Ready in 60 seconds",   desc: "Run your first analysis immediately" },
+              { icon: "🔒", title: "Bank-grade security",   desc: "Your data is encrypted and never shared" },
+              { icon: "📈", title: "Proven methodology",    desc: "Goldman Sachs-standard DCF models" },
             ].map(f => (
               <div className="auth-feature" key={f.title}>
                 <div className="auth-feature-icon">{f.icon}</div>
@@ -1002,38 +1133,36 @@ function SignupPage({ onSignup, onLogin, onBack }) {
           </div>
         </div>
       </div>
-
       <div className="auth-right">
-        <div className="auth-form-logo">
-          <div className="auth-form-logo-dot" />
-          Capital<span>IQ</span>
-        </div>
+        <div className="auth-form-logo"><div className="auth-form-logo-dot" />Capital<span>IQ</span></div>
         <div className="auth-title">Create your account</div>
         <div className="auth-title-sub">Free forever on your first project</div>
-
         {error && <div className="auth-error">⚠ {error}</div>}
+
+        <button onClick={handleGoogle} disabled={googleLoading}
+          style={{ width:"100%", padding:"11px", border:"1.5px solid var(--border)", borderRadius:8, background:"#fff", fontFamily:"var(--sans)", fontSize:14, fontWeight:500, cursor:"pointer", color:"var(--ink)", display:"flex", alignItems:"center", justifyContent:"center", gap:10, marginBottom:16, transition:"all 0.15s" }}
+          onMouseEnter={e => e.currentTarget.style.borderColor="var(--ink)"}
+          onMouseLeave={e => e.currentTarget.style.borderColor="var(--border)"}>
+          <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.35-8.16 2.35-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+          {googleLoading ? "Redirecting..." : "Sign up with Google"}
+        </button>
+
+        <div className="auth-divider"><span className="auth-divider-text">or sign up with email</span></div>
 
         <div className="auth-field">
           <label>Full name</label>
-          <input className="auth-input" type="text" placeholder="Maxim Ivanov"
-            value={name} onChange={e => setName(e.target.value)} />
+          <input className="auth-input" type="text" placeholder="Your Name" value={name} onChange={e => setName(e.target.value)} />
         </div>
-
         <div className="auth-field">
           <label>Work email</label>
-          <input className="auth-input" type="email" placeholder="you@company.com"
-            value={email} onChange={e => setEmail(e.target.value)} />
+          <input className="auth-input" type="email" placeholder="you@company.com" value={email} onChange={e => setEmail(e.target.value)} />
         </div>
-
         <div className="auth-field">
           <label>Password</label>
           <div className="auth-password-wrap">
             <input className="auth-input" type={showPw ? "text" : "password"} placeholder="Min. 6 characters"
-              value={password} onChange={e => setPassword(e.target.value)}
-              style={{ paddingRight: 40 }} />
-            <button className="auth-password-toggle" onClick={() => setShowPw(p => !p)}>
-              {showPw ? "Hide" : "Show"}
-            </button>
+              value={password} onChange={e => setPassword(e.target.value)} style={{ paddingRight:40 }} />
+            <button className="auth-password-toggle" onClick={() => setShowPw(p => !p)}>{showPw ? "Hide" : "Show"}</button>
           </div>
           {password.length > 0 && (
             <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6 }}>
@@ -1044,29 +1173,19 @@ function SignupPage({ onSignup, onLogin, onBack }) {
             </div>
           )}
         </div>
-
         <div className="auth-field">
           <label>Confirm password</label>
           <input className={`auth-input ${confirm && confirm !== password ? "error" : ""}`}
             type={showPw ? "text" : "password"} placeholder="Repeat password"
-            value={confirm} onChange={e => setConfirm(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && handleSubmit()} />
-          {confirm && confirm !== password && (
-            <div style={{ fontSize:11, color:"var(--red)", marginTop:4 }}>Passwords don't match</div>
-          )}
+            value={confirm} onChange={e => setConfirm(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+          {confirm && confirm !== password && <div style={{ fontSize:11, color:"var(--red)", marginTop:4 }}>Passwords don't match</div>}
         </div>
 
         <button className={`auth-btn ${loading ? "loading" : ""}`} onClick={handleSubmit} disabled={loading}>
           {loading ? "" : "Create free account →"}
         </button>
-
-        <div className="auth-terms">
-          By signing up you agree to our <a>Terms of Service</a> and <a>Privacy Policy</a>
-        </div>
-
-        <div className="auth-switch">
-          Already have an account? <a onClick={onLogin}>Sign in →</a>
-        </div>
+        <div className="auth-terms">By signing up you agree to our <a>Terms of Service</a> and <a>Privacy Policy</a></div>
+        <div className="auth-switch">Already have an account? <a onClick={onSignin}>Sign in →</a></div>
       </div>
     </div>
   );
@@ -1079,12 +1198,14 @@ function ForgotPage({ onBack }) {
   const [email, setEmail]     = useState("");
   const [loading, setLoading] = useState(false);
   const [sent, setSent]       = useState(false);
+  const [error, setError]     = useState("");
 
-  const handleSubmit = () => {
-    if (!email.includes("@")) return;
+  const handleSubmit = async () => {
+    if (!email.includes("@")) { setError("Please enter a valid email."); return; }
     setLoading(true);
-    // Replace with: supabase.auth.resetPasswordForEmail(email)
-    setTimeout(() => { setLoading(false); setSent(true); }, 1200);
+    await sb.auth.resetPassword(email);
+    setLoading(false);
+    setSent(true);
   };
 
   return (
@@ -1093,26 +1214,25 @@ function ForgotPage({ onBack }) {
         <div className="auth-left-content">
           <div className="auth-brand">Capital<span>IQ</span></div>
           <div className="auth-tagline">We'll get you<br /><em>back in</em><br />quickly.</div>
-          <div className="auth-sub">Enter your email and we'll send you a secure link to reset your password. It takes less than a minute.</div>
+          <div className="auth-sub">Enter your email and we'll send a secure reset link. Takes less than a minute.</div>
         </div>
       </div>
       <div className="auth-right">
         <div className="auth-form-logo"><div className="auth-form-logo-dot" />Capital<span>IQ</span></div>
         <div className="auth-title">Reset password</div>
         <div className="auth-title-sub">We'll email you a reset link</div>
-
         {sent ? (
           <>
-            <div className="auth-success">✓ Reset link sent! Check your inbox (and spam folder).</div>
-            <button className="auth-btn" onClick={onBack}>Back to sign in →</button>
+            <div className="auth-success">✓ Reset link sent! Check your inbox and spam folder.</div>
+            <button className="auth-btn" onClick={onBack} style={{ marginTop:16 }}>Back to sign in →</button>
           </>
         ) : (
           <>
+            {error && <div className="auth-error">⚠ {error}</div>}
             <div className="auth-field">
               <label>Email address</label>
               <input className="auth-input" type="email" placeholder="you@company.com"
-                value={email} onChange={e => setEmail(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleSubmit()} autoFocus />
+                value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} autoFocus />
             </div>
             <button className={`auth-btn ${loading ? "loading" : ""}`} onClick={handleSubmit} disabled={loading}>
               {loading ? "" : "Send reset link →"}
@@ -1128,9 +1248,10 @@ function ForgotPage({ onBack }) {
 /* ══════════════════════════════════════════════════════════════════════
    PROJECTS DASHBOARD
 ══════════════════════════════════════════════════════════════════════ */
-function Dashboard({ user, projects, onOpen, onDelete, onLogout, onNew, currencyCode, setCurrencyCode }) {
+function Dashboard({ session, projects, loading, onOpen, onDelete, onLogout, onNew, currencyCode, setCurrencyCode }) {
   const { fmtK } = useFmt();
-  const initials = user?.name?.split(" ").map(w => w[0]).join("").toUpperCase().slice(0,2) || "U";
+  const user     = session?.user || {};
+  const initials = user.name?.split(" ").map(w => w[0]).join("").toUpperCase().slice(0,2) || "U";
   const totalValue = projects.reduce((s,p) => s + (p.finalValue||0), 0);
   const avgIrr     = projects.length ? projects.reduce((s,p) => s + (p.irr||0), 0) / projects.length : 0;
   const profitable = projects.filter(p => p.npv > 0).length;
@@ -1145,7 +1266,7 @@ function Dashboard({ user, projects, onOpen, onDelete, onLogout, onNew, currency
             {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.symbol} {c.code}</option>)}
           </select>
           <div className="dash-avatar">{initials}</div>
-          <div className="dash-user-name">{user?.name}</div>
+          <div className="dash-user-name">{user.name || user.email}</div>
           <button className="dash-logout" onClick={onLogout}>Sign out</button>
         </div>
       </div>
@@ -1153,8 +1274,8 @@ function Dashboard({ user, projects, onOpen, onDelete, onLogout, onNew, currency
       <div className="dash-body">
         <div className="dash-header">
           <div>
-            <div className="dash-greeting">Good day, {user?.name?.split(" ")[0]} 👋</div>
-            <div className="dash-greeting-sub">You have {projects.length} investment {projects.length === 1 ? "project" : "projects"}</div>
+            <div className="dash-greeting">Good day, {user.name?.split(" ")[0] || "there"} 👋</div>
+            <div className="dash-greeting-sub">{loading ? "Loading your projects..." : `You have ${projects.length} investment ${projects.length === 1 ? "project" : "projects"}`}</div>
           </div>
           <button className="dash-new-btn" onClick={onNew}>+ New Project</button>
         </div>
