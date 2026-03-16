@@ -762,71 +762,103 @@ const AuthStyles = () => (
 /* ══════════════════════════════════════════════════════════════════════
    SUPABASE CONFIG  —  replace with your own keys
 ══════════════════════════════════════════════════════════════════════ */
-const SUPABASE_URL      = https://zbluszpcsztpzoskzkiz.supabase.co;
-const SUPABASE_ANON_KEY = sb_publishable_-amT-RfNBnJHgM7M-UNPVg_WEtnxFK6;
+const SUPABASE_URL      = 'https://zbluszpcsztpzoskzkiz.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_-amT-RfNBnJHgM7M-UNPVg_WEtnxFK6';
 
 // Minimal Supabase client (no npm package needed)
 const sb = (() => {
-  const headers = { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` };
+  const headers = {
+    'Content-Type': 'application/json',
+    'apikey': SUPABASE_ANON_KEY,
+    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+  };
 
-  const authHeaders = (token) => ({ ...headers, 'Authorization': `Bearer ${token}` });
+  const authHeaders = (token) => ({
+    ...headers,
+    'Authorization': `Bearer ${token}`
+  });
 
   return {
     auth: {
       async signUp({ email, password, name }) {
-        const r = await fetch(`${SUPABASE_URL}/auth/v1/signup`, { method:'POST', headers, body: JSON.stringify({ email, password, data: { full_name: name } }) });
+        const r = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ email, password, data: { full_name: name } })
+        });
         return r.json();
       },
       async signIn({ email, password }) {
-        const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, { method:'POST', headers, body: JSON.stringify({ email, password }) });
+        const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ email, password })
+        });
         return r.json();
       },
-      async signInWithGoogle() {
-        window.location.href = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${window.location.origin}`;
-      },
       async resetPassword(email) {
-        const r = await fetch(`${SUPABASE_URL}/auth/v1/recover`, { method:'POST', headers, body: JSON.stringify({ email }) });
+        const r = await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ email, redirect_to: window.location.origin })
+        });
         return r.json();
       },
       async signOut(token) {
-        await fetch(`${SUPABASE_URL}/auth/v1/logout`, { method:'POST', headers: authHeaders(token) });
+        await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
+          method: 'POST', headers: authHeaders(token)
+        });
       },
       async getUser(token) {
-        const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: authHeaders(token) });
+        const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+          headers: authHeaders(token)
+        });
         return r.json();
       },
     },
     db: {
       async getProjects(token) {
-        const r = await fetch(`${SUPABASE_URL}/rest/v1/projects?select=*&order=updated_at.desc`, { headers: authHeaders(token) });
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/projects?select=*&order=updated_at.desc`, {
+          headers: authHeaders(token)
+        });
         return r.json();
       },
       async createProject(token, data) {
-        const r = await fetch(`${SUPABASE_URL}/rest/v1/projects`, { method:'POST', headers: { ...authHeaders(token), 'Prefer': 'return=representation' }, body: JSON.stringify(data) });
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/projects`, {
+          method: 'POST',
+          headers: { ...authHeaders(token), 'Prefer': 'return=representation' },
+          body: JSON.stringify(data)
+        });
         const json = await r.json();
         return Array.isArray(json) ? json[0] : json;
       },
       async updateProject(token, id, data) {
-        const r = await fetch(`${SUPABASE_URL}/rest/v1/projects?id=eq.${id}`, { method:'PATCH', headers: { ...authHeaders(token), 'Prefer': 'return=representation' }, body: JSON.stringify({ ...data, updated_at: new Date().toISOString() }) });
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/projects?id=eq.${id}`, {
+          method: 'PATCH',
+          headers: { ...authHeaders(token), 'Prefer': 'return=representation' },
+          body: JSON.stringify({ ...data, updated_at: new Date().toISOString() })
+        });
         const json = await r.json();
         return Array.isArray(json) ? json[0] : json;
       },
       async deleteProject(token, id) {
-        await fetch(`${SUPABASE_URL}/rest/v1/projects?id=eq.${id}`, { method:'DELETE', headers: authHeaders(token) });
+        await fetch(`${SUPABASE_URL}/rest/v1/projects?id=eq.${id}`, {
+          method: 'DELETE', headers: authHeaders(token)
+        });
       },
     },
   };
 })();
 
-// Helper: parse Supabase session from URL hash (after Google OAuth redirect)
-function parseSessionFromHash() {
+// Parse Supabase session from URL hash after email confirmation redirect
+function parseSessionFromURL() {
   const hash = window.location.hash;
-  if (!hash) return null;
-  const params = new URLSearchParams(hash.replace('#', ''));
-  const token = params.get('access_token');
-  if (!token) return null;
-  window.history.replaceState(null, '', window.location.pathname);
-  return { access_token: token, token_type: params.get('token_type') };
+  if (hash && hash.includes('access_token')) {
+    const params = new URLSearchParams(hash.replace('#', ''));
+    const token = params.get('access_token');
+    if (token) {
+      window.history.replaceState(null, '', window.location.pathname);
+      return { access_token: token };
+    }
+  }
+  return null;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -844,13 +876,21 @@ export default function App() {
 
   const cur = CURRENCIES.find(c => c.code === currencyCode) || CURRENCIES[0];
 
-  // On mount: check for OAuth redirect or stored session
+  // On mount: check for session in URL or localStorage
   useEffect(() => {
-    const oauthSession = parseSessionFromHash();
-    if (oauthSession) {
-      sb.auth.getUser(oauthSession.access_token).then(user => {
+    const urlSession = parseSessionFromURL();
+
+    if (urlSession?.access_token) {
+      sb.auth.getUser(urlSession.access_token).then(user => {
         if (user?.id) {
-          const sess = { access_token: oauthSession.access_token, user: { id: user.id, email: user.email, name: user.user_metadata?.full_name || user.email.split('@')[0] } };
+          const sess = {
+            access_token: urlSession.access_token,
+            user: {
+              id: user.id,
+              email: user.email,
+              name: user.user_metadata?.full_name || user.email.split('@')[0]
+            }
+          };
           setSession(sess);
           localStorage.setItem('ciq_session', JSON.stringify(sess));
           setScreen("dashboard");
@@ -858,15 +898,23 @@ export default function App() {
       });
       return;
     }
+
+    // Check stored session
     const stored = localStorage.getItem('ciq_session');
     if (stored) {
       try {
         const sess = JSON.parse(stored);
         sb.auth.getUser(sess.access_token).then(user => {
-          if (user?.id) { setSession(sess); setScreen("dashboard"); }
-          else localStorage.removeItem('ciq_session');
+          if (user?.id) {
+            setSession(sess);
+            setScreen("dashboard");
+          } else {
+            localStorage.removeItem('ciq_session');
+          }
         });
-      } catch { localStorage.removeItem('ciq_session'); }
+      } catch {
+        localStorage.removeItem('ciq_session');
+      }
     }
   }, []);
 
@@ -969,7 +1017,6 @@ function LoginPage({ onLogin, onSignup, onForgot, onBack }) {
   const [password, setPassword] = useState("");
   const [showPw, setShowPw]     = useState(false);
   const [loading, setLoading]   = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError]       = useState("");
 
   const handleSubmit = async () => {
@@ -1023,17 +1070,6 @@ function LoginPage({ onLogin, onSignup, onForgot, onBack }) {
 
         {error && <div className="auth-error">⚠ {error}</div>}
 
-        {/* Google */}
-        <button onClick={handleGoogle} disabled={googleLoading}
-          style={{ width:"100%", padding:"11px", border:"1.5px solid var(--border)", borderRadius:8, background:"#fff", fontFamily:"var(--sans)", fontSize:14, fontWeight:500, cursor:"pointer", color:"var(--ink)", display:"flex", alignItems:"center", justifyContent:"center", gap:10, marginBottom:16, transition:"all 0.15s" }}
-          onMouseEnter={e => e.currentTarget.style.borderColor="var(--ink)"}
-          onMouseLeave={e => e.currentTarget.style.borderColor="var(--border)"}>
-          <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.35-8.16 2.35-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
-          {googleLoading ? "Redirecting..." : "Continue with Google"}
-        </button>
-
-        <div className="auth-divider"><span className="auth-divider-text">or sign in with email</span></div>
-
         <div className="auth-field">
           <label>Email address</label>
           <input className={`auth-input ${error && !email ? "error" : ""}`} type="email" placeholder="you@company.com"
@@ -1073,7 +1109,6 @@ function SignupPage({ onLogin, onSignin, onBack }) {
   const [confirm, setConfirm]   = useState("");
   const [showPw, setShowPw]     = useState(false);
   const [loading, setLoading]   = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError]       = useState("");
   const [success, setSuccess]   = useState(false);
 
@@ -1098,8 +1133,6 @@ function SignupPage({ onLogin, onSignin, onBack }) {
       setSuccess(true);
     }
   };
-
-  const handleGoogle = () => { setGoogleLoading(true); sb.auth.signInWithGoogle(); };
 
   if (success) return (
     <div className="auth-wrap" style={{ justifyContent:"center" }}>
@@ -1138,16 +1171,6 @@ function SignupPage({ onLogin, onSignin, onBack }) {
         <div className="auth-title">Create your account</div>
         <div className="auth-title-sub">Free forever on your first project</div>
         {error && <div className="auth-error">⚠ {error}</div>}
-
-        <button onClick={handleGoogle} disabled={googleLoading}
-          style={{ width:"100%", padding:"11px", border:"1.5px solid var(--border)", borderRadius:8, background:"#fff", fontFamily:"var(--sans)", fontSize:14, fontWeight:500, cursor:"pointer", color:"var(--ink)", display:"flex", alignItems:"center", justifyContent:"center", gap:10, marginBottom:16, transition:"all 0.15s" }}
-          onMouseEnter={e => e.currentTarget.style.borderColor="var(--ink)"}
-          onMouseLeave={e => e.currentTarget.style.borderColor="var(--border)"}>
-          <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.35-8.16 2.35-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
-          {googleLoading ? "Redirecting..." : "Sign up with Google"}
-        </button>
-
-        <div className="auth-divider"><span className="auth-divider-text">or sign up with email</span></div>
 
         <div className="auth-field">
           <label>Full name</label>
