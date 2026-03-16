@@ -481,41 +481,130 @@ function useFmt() {
   };
 }
 
-function calcSchedule(inputs) {
-  const { principal, monthly, rate, years, compound, inflation, wacc } = inputs;
-  const ppy = compound === "monthly" ? 12 : compound === "quarterly" ? 4 : 1;
-  const rp  = (Number(rate)/100) / ppy;
-  const inf = Number(inflation)/100;
-  const disc = Number(wacc)/100;
-  let bal = Number(principal), contrib = Number(principal), npvAcc = -Number(principal);
+/* ─── Input sanitizer ─────────────────────────────────────────────── */
+function sanitize(inp) {
+  return {
+    principal:     Math.max(0,   Number(inp.principal)    || 0),
+    monthly:       Math.max(0,   Number(inp.monthly)      || 0),
+    rate:          Math.max(0,   Math.min(100, Number(inp.rate)          || 0)),
+    years:         Math.max(1,   Math.min(50,  Math.round(Number(inp.years) || 1))),
+    compound:      inp.compound  || "monthly",
+    inflation:     Math.max(0,   Math.min(50,  Number(inp.inflation)     || 0)),
+    wacc:          Math.max(0.1, Math.min(100, Number(inp.wacc)          || 10)),
+    tax:           Math.max(0,   Math.min(99,  Number(inp.tax)           || 0)),
+    revenue:       Math.max(0,   Number(inp.revenue)      || 0),
+    revenueGrowth: Math.max(-50, Math.min(100, Number(inp.revenueGrowth) || 5)),
+    cogsPercent:   Math.max(0,   Math.min(100, Number(inp.cogsPercent)   || 55)),
+    opexPercent:   Math.max(0,   Math.min(100, Number(inp.opexPercent)   || 20)),
+    capex:         Math.max(0,   Number(inp.capex)        || 0),
+    debtAmount:    Math.max(0,   Number(inp.debtAmount)   || 0),
+    interestRate:  Math.max(0,   Math.min(50, Number(inp.interestRate)   || 5)),
+  };
+}
+
+function calcSchedule(rawInputs) {
+  const i = sanitize(rawInputs);
+  const ppy     = i.compound === "monthly" ? 12 : i.compound === "quarterly" ? 4 : 1;
+  const nomRate = i.rate / 100;
+  const inf     = i.inflation / 100;
+  const nomWACC = i.wacc / 100;
+  // Fisher equation: real WACC = (1+nominal)/(1+inflation) - 1
+  const realWACC = inf > 0 ? (1 + nomWACC) / (1 + inf) - 1 : nomWACC;
+  const rp = nomRate / ppy;
+  const annualInterest = i.debtAmount * (i.interestRate / 100);
+  const totalInitial   = i.principal + i.capex;
+  const annualDepr     = i.capex > 0 ? i.capex / i.years : 0;
+
+  let bal = i.principal, contrib = i.principal;
+  let npvNom = -totalInitial, npvReal = -totalInitial;
   const sched = [];
-  for (let y = 1; y <= Number(years); y++) {
+
+  for (let y = 1; y <= i.years; y++) {
     const ys = bal;
-    for (let p = 0; p < ppy; p++) { bal += Number(monthly)*(12/ppy); contrib += Number(monthly)*(12/ppy); bal *= 1+rp; }
-    const yearGrowth = bal - ys;
-    const fcf = yearGrowth * 0.6 * (1 - 0.21);
-    npvAcc += fcf / Math.pow(1+disc, y);
-    sched.push({ year: y, balance: Math.round(bal), contributions: Math.round(contrib), interest: Math.round(bal-contrib), inflationAdj: Math.round(bal/Math.pow(1+inf,y)), yearGrowth: Math.round(yearGrowth), fcf: Math.round(fcf), cumNPV: Math.round(npvAcc) });
+    // Portfolio compounding
+    for (let p = 0; p < ppy; p++) {
+      bal    += i.monthly * (12 / ppy);
+      contrib += i.monthly * (12 / ppy);
+      bal    *= 1 + rp;
+    }
+
+    // ── Proper P&L ──────────────────────────────────────────────
+    const yearRevenue = i.revenue > 0
+      ? i.revenue * Math.pow(1 + i.revenueGrowth / 100, y)
+      : 0;
+    const inflFactor  = Math.pow(1 + inf, y);          // cost inflation
+    const cogs        = yearRevenue * (i.cogsPercent / 100) * inflFactor;
+    const grossProfit = yearRevenue - cogs;
+    const opex        = yearRevenue * (i.opexPercent / 100) * inflFactor;
+    const ebitda      = grossProfit - opex;
+    const ebit        = ebitda - annualDepr;
+    const ebt         = ebit - annualInterest;
+    const taxAmt      = Math.max(0, ebt * (i.tax / 100));
+    const netIncome   = ebt - taxAmt;
+
+    // FCF: if revenue entered use proper EBIT*(1-t)+D; else use portfolio growth net of tax
+    const portfolioGrowth = bal - ys;
+    const fcf = i.revenue > 0
+      ? Math.round(ebit * (1 - i.tax / 100) + annualDepr)
+      : Math.round(portfolioGrowth * (1 - i.tax / 100));
+
+    // Nominal NPV
+    npvNom  += fcf / Math.pow(1 + nomWACC, y);
+    // Real NPV: deflate FCF to real terms first, then discount at real WACC
+    const fcfReal = fcf / inflFactor;
+    npvReal += fcfReal / Math.pow(1 + realWACC, y);
+
+    sched.push({
+      year: y,
+      balance:      Math.round(bal),
+      contributions: Math.round(contrib),
+      interest:     Math.round(bal - contrib),
+      inflationAdj: Math.round(bal / inflFactor),
+      yearGrowth:   Math.round(bal - ys),
+      fcf,
+      cumNPV:       Math.round(npvNom),
+      cumNPVReal:   Math.round(npvReal),
+      revenue:      Math.round(yearRevenue),
+      grossProfit:  Math.round(grossProfit),
+      ebitda:       Math.round(ebitda),
+      ebit:         Math.round(ebit),
+      netIncome:    Math.round(netIncome),
+    });
   }
-  const last = sched[sched.length-1] || {};
-  const allFCF = [-Number(principal), ...sched.map(r => r.fcf)];
+
+  const last = sched[sched.length - 1] || {};
+
+  // IRR (Newton-Raphson)
+  const allFCF = [-totalInitial, ...sched.map(r => r.fcf)];
   let irr = 0.1;
-  for (let i = 0; i < 100; i++) {
-    const v = allFCF.reduce((s,v,t) => s+v/Math.pow(1+irr,t), 0);
-    const d = allFCF.reduce((s,v,t) => s-t*v/Math.pow(1+irr,t+1), 0);
+  for (let k = 0; k < 200; k++) {
+    const v = allFCF.reduce((s, v, t) => s + v / Math.pow(1 + irr, t), 0);
+    const d = allFCF.reduce((s, v, t) => s - t * v / Math.pow(1 + irr, t + 1), 0);
     if (!d || Math.abs(d) < 1e-10) break;
-    irr -= v/d;
-    if (irr < -1) { irr = -0.99; break; }
+    const next = irr - v / d;
+    if (next < -0.99) { irr = -0.99; break; }
+    irr = next;
   }
+  const irrReal = isFinite(irr) && inf > 0 ? (1 + irr) / (1 + inf) - 1 : null;
+
   return {
     schedule: sched,
     totals: {
-      finalBalance: last.balance||0, totalContrib: last.contributions||0,
-      totalInterest: last.interest||0, inflationAdj: last.inflationAdj||0,
-      roi: last.contributions > 0 ? ((last.balance-last.contributions)/last.contributions)*100 : 0,
-      npv: last.cumNPV||0, irr: isFinite(irr) ? irr : null,
-      payback: sched.findIndex((r,i) => sched.slice(0,i+1).reduce((s,x)=>s+x.fcf,0) >= Number(principal)),
-    }
+      finalBalance:  last.balance       || 0,
+      totalContrib:  last.contributions || 0,
+      totalInterest: last.interest      || 0,
+      inflationAdj:  last.inflationAdj  || 0,
+      roi: last.contributions > 0
+        ? ((last.balance - last.contributions) / last.contributions) * 100 : 0,
+      npv:          Math.round(npvNom),
+      npvReal:      Math.round(npvReal),
+      irr:          isFinite(irr) ? irr : null,
+      irrReal,
+      payback: sched.findIndex((r, idx) =>
+        sched.slice(0, idx + 1).reduce((s, x) => s + x.fcf, 0) >= totalInitial
+      ),
+      totalInitial,
+    },
   };
 }
 
@@ -985,8 +1074,9 @@ export default function App() {
       {screen === "login"     && <LoginPage   onLogin={handleLogin} onSignup={() => setScreen("signup")} onForgot={() => setScreen("forgot")} onBack={() => setScreen("landing")} />}
       {screen === "signup"    && <SignupPage  onLogin={handleLogin} onSignin={() => setScreen("login")} onBack={() => setScreen("landing")} />}
       {screen === "forgot"    && <ForgotPage  onBack={() => setScreen("login")} />}
-      {screen === "dashboard" && <Dashboard   session={session} projects={projects} loading={projLoading} onOpen={openProject} onDelete={deleteProject} onLogout={handleLogout} onNew={() => setShowNewModal(true)} currencyCode={currencyCode} setCurrencyCode={setCurrencyCode} />}
-      {screen === "app"       && <AppScreen   onBack={() => setScreen("dashboard")} currencyCode={currencyCode} setCurrencyCode={setCurrencyCode} project={activeProject} onSave={saveProject} />}
+      {screen === "dashboard" && <Dashboard   session={session} projects={projects} loading={projLoading} onOpen={openProject} onDelete={deleteProject} onLogout={handleLogout} onNew={() => setShowNewModal(true)} currencyCode={currencyCode} setCurrencyCode={setCurrencyCode} onProfile={() => setScreen("profile")} />}
+      {screen === "app"       && <AppScreen   onBack={() => setScreen("dashboard")} currencyCode={currencyCode} setCurrencyCode={setCurrencyCode} project={activeProject} onSave={saveProject} session={session} onShowProfile={() => setScreen("profile")} />}
+      {screen === "profile"   && <ProfilePage session={session} onBack={() => setScreen(activeProject ? "app" : "dashboard")} onLogout={handleLogout} />}
       {showNewModal && (
         <div className="modal-overlay" onClick={() => setShowNewModal(false)}>
           <div className="modal-box" onClick={e => e.stopPropagation()}>
@@ -1271,7 +1361,7 @@ function ForgotPage({ onBack }) {
 /* ══════════════════════════════════════════════════════════════════════
    PROJECTS DASHBOARD
 ══════════════════════════════════════════════════════════════════════ */
-function Dashboard({ session, projects, loading, onOpen, onDelete, onLogout, onNew, currencyCode, setCurrencyCode }) {
+function Dashboard({ session, projects, loading, onOpen, onDelete, onLogout, onNew, currencyCode, setCurrencyCode, onProfile }) {
   const { fmtK } = useFmt();
   const user     = session?.user || {};
   const initials = user.name?.split(" ").map(w => w[0]).join("").toUpperCase().slice(0,2) || "U";
@@ -1288,8 +1378,17 @@ function Dashboard({ session, projects, loading, onOpen, onDelete, onLogout, onN
             style={{ background:"var(--cream)", border:"1px solid var(--border)", borderRadius:6, padding:"5px 8px", fontSize:12, fontWeight:600, color:"var(--emerald)", fontFamily:"var(--sans)", cursor:"pointer", outline:"none" }}>
             {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.symbol} {c.code}</option>)}
           </select>
-          <div className="dash-avatar">{initials}</div>
-          <div className="dash-user-name">{user.name || user.email}</div>
+          {/* Profile button */}
+          <button onClick={onProfile}
+            style={{ display:"flex", alignItems:"center", gap:8, background:"var(--cream)", border:"1px solid var(--border)", borderRadius:8, padding:"5px 12px 5px 5px", cursor:"pointer", fontFamily:"var(--sans)", transition:"all 0.15s" }}
+            onMouseEnter={e => e.currentTarget.style.borderColor="var(--emerald)"}
+            onMouseLeave={e => e.currentTarget.style.borderColor="var(--border)"}>
+            <div className="dash-avatar">{initials}</div>
+            <div style={{ textAlign:"left" }}>
+              <div style={{ fontSize:12, fontWeight:600, color:"var(--ink)" }}>{user.name || "My Account"}</div>
+              <div style={{ fontSize:10, color:"var(--ink3)" }}>View profile</div>
+            </div>
+          </button>
           <button className="dash-logout" onClick={onLogout}>Sign out</button>
         </div>
       </div>
@@ -1303,21 +1402,57 @@ function Dashboard({ session, projects, loading, onOpen, onDelete, onLogout, onN
           <button className="dash-new-btn" onClick={onNew}>+ New Project</button>
         </div>
 
-        <div className="dash-stats">
-          {[
-            { label: "Total Projects",    value: projects.length,          cls: "",      suffix: "" },
-            { label: "Combined Value",    value: fmtK(totalValue),         cls: "green", suffix: "" },
-            { label: "Profitable",        value: `${profitable}/${projects.length}`, cls: "green", suffix: "" },
-            { label: "Avg IRR",           value: pct(avgIrr),              cls: "",      suffix: "" },
-          ].map(s => (
-            <div className="dash-stat" key={s.label}>
-              <div className="dash-stat-label">{s.label}</div>
-              <div className={`dash-stat-value ${s.cls}`}>{s.value}</div>
-            </div>
-          ))}
-        </div>
+        {/* Stats */}
+        {projects.length > 0 && (
+          <div className="dash-stats">
+            {[
+              { label: "Total Projects",  value: projects.length,          cls: "" },
+              { label: "Combined Value",  value: fmtK(totalValue),         cls: "green" },
+              { label: "Profitable",      value: `${profitable}/${projects.length}`, cls: "green" },
+              { label: "Avg IRR",         value: pct(avgIrr),              cls: "" },
+            ].map(s => (
+              <div className="dash-stat" key={s.label}>
+                <div className="dash-stat-label">{s.label}</div>
+                <div className={`dash-stat-value ${s.cls}`}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="dash-section-title">Your Projects</div>
+
+        {/* Onboarding empty state */}
+        {!loading && projects.length === 0 && (
+          <div style={{ textAlign:"center", padding:"60px 20px", background:"var(--card)", borderRadius:16, border:"2px dashed var(--border)", marginBottom:20 }}>
+            <div style={{ fontSize:48, marginBottom:16 }}>📊</div>
+            <div style={{ fontFamily:"var(--serif)", fontSize:24, color:"var(--ink)", marginBottom:8 }}>Welcome to CapitalIQ</div>
+            <div style={{ fontSize:14, color:"var(--ink2)", marginBottom:8, maxWidth:420, margin:"0 auto 24px" }}>
+              Create your first investment project to get started. You'll get professional DCF analysis, scenario planning, sensitivity analysis and a full investment proposal — in minutes.
+            </div>
+            <div style={{ display:"flex", gap:12, justifyContent:"center", flexWrap:"wrap", marginBottom:24 }}>
+              {[
+                { icon:"💰", text:"DCF & NPV / IRR" },
+                { icon:"🎭", text:"4 Scenario types" },
+                { icon:"📈", text:"Financial Ratios" },
+                { icon:"📄", text:"PDF Proposal" },
+              ].map(f => (
+                <div key={f.text} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", background:"var(--cream)", borderRadius:8, fontSize:13, color:"var(--ink2)" }}>
+                  <span>{f.icon}</span><span>{f.text}</span>
+                </div>
+              ))}
+            </div>
+            <button className="dash-new-btn" onClick={onNew} style={{ margin:"0 auto" }}>
+              + Create your first project
+            </button>
+          </div>
+        )}
+
+        {loading && (
+          <div style={{ textAlign:"center", padding:"40px", color:"var(--ink3)", fontSize:14 }}>
+            Loading your projects...
+          </div>
+        )}
+
         <div className="projects-grid">
           {projects.map(p => (
             <div className="project-card" key={p.id} onClick={() => onOpen(p)}>
@@ -1350,11 +1485,12 @@ function Dashboard({ session, projects, loading, onOpen, onDelete, onLogout, onN
               </div>
             </div>
           ))}
-
-          <div className="project-new-card" onClick={onNew}>
-            <div className="project-new-icon">＋</div>
-            <div className="project-new-text">New Project</div>
-          </div>
+          {projects.length > 0 && (
+            <div className="project-new-card" onClick={onNew}>
+              <div className="project-new-icon">＋</div>
+              <div className="project-new-text">New Project</div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -2005,22 +2141,26 @@ Decision: ⚠️ REVISE AND RESUBMIT`,
 }
 
 const SCENARIO_PRESETS = {
-  Base:   { rate: 7,  monthly: 500,  wacc: 10, principal: 10000, years: 20 },
-  Bull:   { rate: 11, monthly: 750,  wacc: 8,  principal: 15000, years: 25 },
-  Bear:   { rate: 4,  monthly: 250,  wacc: 13, principal: 5000,  years: 15 },
-  Stress: { rate: 1.5,monthly: 100, wacc: 16, principal: 2000,  years: 10 },
+  Base:   { rate: 7,  monthly: 500,  wacc: 10, principal: 10000, years: 20, revenue: 200000, revenueGrowth: 5,  cogsPercent: 55, opexPercent: 20, capex: 0, debtAmount: 0, interestRate: 5 },
+  Bull:   { rate: 11, monthly: 750,  wacc: 8,  principal: 15000, years: 25, revenue: 300000, revenueGrowth: 10, cogsPercent: 50, opexPercent: 18, capex: 0, debtAmount: 0, interestRate: 5 },
+  Bear:   { rate: 4,  monthly: 250,  wacc: 13, principal: 5000,  years: 15, revenue: 120000, revenueGrowth: 2,  cogsPercent: 62, opexPercent: 25, capex: 0, debtAmount: 0, interestRate: 5 },
+  Stress: { rate: 1.5,monthly: 100, wacc: 16, principal: 2000,  years: 10, revenue: 80000,  revenueGrowth: 0,  cogsPercent: 70, opexPercent: 28, capex: 0, debtAmount: 0, interestRate: 8 },
 };
 
-function AppScreen({ onBack, currencyCode, setCurrencyCode, project, onSave }) {
+const DEFAULT_INPUTS = {
+  principal: 10000, monthly: 500, rate: 7, years: 20,
+  compound: "monthly", inflation: 2, wacc: 10, tax: 21,
+  revenue: 0, revenueGrowth: 5, cogsPercent: 55, opexPercent: 20,
+  capex: 0, debtAmount: 0, interestRate: 5,
+};
+
+function AppScreen({ onBack, currencyCode, setCurrencyCode, project, onSave, session, onShowProfile }) {
   const { symbol } = useCurrency();
   const [appTab, setAppTab]     = useState("calculator");
   const [scenario, setScenario] = useState("Base");
   const [saved, setSaved]       = useState(false);
   const [projectName, setProjectName] = useState(project?.name || "New Investment Project");
-  const [inputs, setInputs] = useState(project?.inputs || {
-    principal: 10000, monthly: 500, rate: 7, years: 20,
-    compound: "monthly", inflation: 2, wacc: 10, tax: 21,
-  });
+  const [inputs, setInputs] = useState({ ...DEFAULT_INPUTS, ...(project?.inputs || {}) });
 
   const setI = (k, v) => { setInputs(p => ({ ...p, [k]: v })); setSaved(false); };
 
@@ -2059,31 +2199,27 @@ function AppScreen({ onBack, currencyCode, setCurrencyCode, project, onSave }) {
           <span style={{ fontSize:18, color:"var(--ink3)" }}>←</span>
           <div className="app-logo">Capital<span>IQ</span></div>
         </div>
-        <input
-          value={projectName}
-          onChange={e => setProjectName(e.target.value)}
-          style={{ background:"var(--cream)", border:"1px solid var(--border)", borderRadius:6, padding:"6px 12px", fontSize:14, color:"var(--ink)", outline:"none", flex:1, maxWidth:320 }}
-        />
+        <input value={projectName} onChange={e => setProjectName(e.target.value)}
+          style={{ background:"var(--cream)", border:"1px solid var(--border)", borderRadius:6, padding:"6px 12px", fontSize:14, color:"var(--ink)", outline:"none", flex:1, maxWidth:280 }} />
         <select value={currencyCode} onChange={e => setCurrencyCode(e.target.value)}
           style={{ background:"var(--cream)", border:"1px solid var(--border)", borderRadius:6, padding:"7px 10px", fontSize:13, fontWeight:600, color:"var(--emerald)", fontFamily:"var(--sans)", cursor:"pointer", outline:"none", minWidth:90 }}>
           {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.symbol} {c.code}</option>)}
         </select>
         <button onClick={handleSave}
           style={{ padding:"7px 16px", borderRadius:6, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"var(--sans)", border:"none", transition:"all 0.15s",
-            background: saved ? "var(--emerald-l)" : "var(--emerald)",
-            color: saved ? "var(--emerald)" : "#fff" }}>
+            background: saved ? "var(--emerald-l)" : "var(--emerald)", color: saved ? "var(--emerald)" : "#fff" }}>
           {saved ? "✓ Saved" : "Save"}
         </button>
-        <button onClick={() => {
-            // Switch to proposal tab for best print output, then print
-            setAppTab("proposal");
-            setTimeout(() => window.print(), 300);
-          }}
-          style={{ padding:"7px 16px", borderRadius:6, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"var(--sans)", border:"1px solid var(--border)", background:"var(--cream)", color:"var(--ink)", transition:"all 0.15s", display:"flex", alignItems:"center", gap:6 }}
-          title="Export as PDF">
-          📄 PDF
+        <button onClick={() => { setAppTab("proposal"); setTimeout(() => window.print(), 300); }}
+          style={{ padding:"7px 14px", borderRadius:6, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"var(--sans)", border:"1px solid var(--border)", background:"var(--cream)", color:"var(--ink)", transition:"all 0.15s" }}
+          title="Export as PDF">📄 PDF
         </button>
-        <button className="nav-cta" style={{ fontSize:12, padding:"7px 14px", background:"var(--ink2)" }}>↓ Excel</button>
+        {/* Profile button */}
+        <button onClick={onShowProfile}
+          style={{ width:34, height:34, borderRadius:"50%", background:"var(--emerald-l)", border:"1.5px solid var(--emerald)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, color:"var(--emerald)", flexShrink:0 }}
+          title="My Profile">
+          {session?.user?.name?.[0]?.toUpperCase() || "U"}
+        </button>
       </div>
 
       <div className="app-tabs">
@@ -2118,14 +2254,25 @@ function AppScreen({ onBack, currencyCode, setCurrencyCode, project, onSave }) {
 function CalcTab({ inputs, setI, totals, schedule }) {
   const { fmtK, symbol } = useFmt();
   const good = totals.npv > 0;
+  const hasRevenue = Number(inputs.revenue) > 0;
+
+  // Validated input handler
+  const setV = (key, val, min, max) => {
+    const n = Number(val);
+    if (isNaN(n)) return;
+    const clamped = Math.max(min, Math.min(max, n));
+    setI(key, clamped);
+  };
+
   return (
     <div>
+      {/* KPI bar */}
       <div className="kpi-bar fade-up">
         {[
-          { label: "Final Value",  value: fmtK(totals.finalBalance), cls: "gold" },
-          { label: "NPV",          value: fmtK(totals.npv),          cls: good ? "green" : "red", badge: good ? "good" : "bad", badgeText: good ? "✓ Creates Value" : "✗ Destroys Value" },
-          { label: "IRR",          value: totals.irr ? pct(totals.irr*100) : "N/A", cls: totals.irr > inputs.wacc/100 ? "green" : "red" },
-          { label: "ROI",          value: pct(totals.roi),           cls: totals.roi > 0 ? "green" : "red" },
+          { label: "Final Value",    value: fmtK(totals.finalBalance), cls: "gold" },
+          { label: "NPV (Nominal)",  value: fmtK(totals.npv),  cls: good ? "green" : "red", badge: good ? "good" : "bad", badgeText: good ? "✓ Creates Value" : "✗ Destroys Value" },
+          { label: "NPV (Real)",     value: fmtK(totals.npvReal || 0), cls: (totals.npvReal||0) > 0 ? "green" : "red" },
+          { label: "IRR",            value: totals.irr ? pct(totals.irr*100) : "N/A", cls: totals.irr > Number(inputs.wacc)/100 ? "green" : "red" },
         ].map(k => (
           <div className="kpi-box" key={k.label}>
             <div className="kpi-box-label">{k.label}</div>
@@ -2135,36 +2282,50 @@ function CalcTab({ inputs, setI, totals, schedule }) {
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+      {/* Inflation impact note */}
+      {Number(inputs.inflation) > 0 && (
+        <div style={{ background:"var(--gold-l)", border:"1px solid #e6c874", borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:12, color:"#7a5c13", display:"flex", gap:8, alignItems:"flex-start" }}>
+          <span>ℹ️</span>
+          <span>With <strong>{inputs.inflation}% inflation</strong>, real WACC = <strong>{(((1+Number(inputs.wacc)/100)/(1+Number(inputs.inflation)/100)-1)*100).toFixed(1)}%</strong> (Fisher equation). Real NPV <strong>{fmtK(totals.npvReal||0)}</strong> vs nominal <strong>{fmtK(totals.npv)}</strong>. Inflation is now factored into all calculations.</span>
+        </div>
+      )}
+
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
+
+        {/* Core investment inputs */}
         <div className="acard fade-up fade-up-1">
           <div className="acard-header">
-            <span className="acard-title">Investment Parameters</span>
-            <span className="acard-sub">Blue = inputs</span>
+            <span className="acard-title">Core Investment Parameters</span>
+            <span className="acard-sub" style={{ fontSize:10, color:"var(--ink3)" }}>Blue = inputs you control</span>
           </div>
           <div className="acard-body">
             <div className="input-grid">
               {[
-                { label: "Initial Investment", key: "principal", pre: symbol },
-                { label: "Monthly Contribution", key: "monthly", pre: symbol },
-                { label: "Annual Return Rate", key: "rate", suf: "%" },
-                { label: "Time Horizon", key: "years", suf: "yrs" },
-                { label: "Inflation Rate", key: "inflation", suf: "%" },
-                { label: "Discount Rate (WACC)", key: "wacc", suf: "%" },
+                { label:"Initial Investment",    key:"principal",  pre:symbol, min:0,    max:1e9 },
+                { label:"Monthly Contribution",  key:"monthly",    pre:symbol, min:0,    max:1e7 },
+                { label:"Annual Return Rate",    key:"rate",       suf:"%",   min:0,    max:100 },
+                { label:"Time Horizon",          key:"years",      suf:"yrs", min:1,    max:50  },
+                { label:"Inflation Rate",        key:"inflation",  suf:"%",   min:0,    max:50  },
+                { label:"Discount Rate (WACC)",  key:"wacc",       suf:"%",   min:0.1,  max:100 },
+                { label:"Corporate Tax Rate",    key:"tax",        suf:"%",   min:0,    max:99  },
               ].map(f => (
                 <div className="input-group" key={f.key}>
                   <label className="input-label">{f.label}</label>
                   <div className="input-row-app">
                     {f.pre && <span className="input-prefix">{f.pre}</span>}
-                    <input className="input-field-app" type="number" value={inputs[f.key]}
-                      onChange={e => setI(f.key, e.target.value)} inputMode="decimal"
-                      style={{ color: "#0000FF" }} />
+                    <input className="input-field-app" type="number"
+                      value={inputs[f.key] ?? ""}
+                      min={f.min} max={f.max}
+                      onChange={e => setI(f.key, e.target.value)}
+                      onBlur={e => setV(f.key, e.target.value, f.min, f.max)}
+                      inputMode="decimal" style={{ color:"#0000FF" }} />
                     {f.suf && <span className="input-suffix">{f.suf}</span>}
                   </div>
                 </div>
               ))}
             </div>
-            <div style={{ marginTop: 16 }}>
-              <label className="input-label" style={{ display: "block", marginBottom: 5 }}>Compounding Frequency</label>
+            <div style={{ marginTop:16 }}>
+              <label className="input-label" style={{ display:"block", marginBottom:5 }}>Compounding</label>
               <div className="input-row-app">
                 <select className="select-app" value={inputs.compound} onChange={e => setI("compound", e.target.value)}>
                   <option value="monthly">Monthly</option>
@@ -2176,54 +2337,106 @@ function CalcTab({ inputs, setI, totals, schedule }) {
           </div>
         </div>
 
+        {/* P&L inputs */}
         <div className="acard fade-up fade-up-2">
-          <div className="acard-header"><span className="acard-title">Portfolio Growth</span></div>
-          <div style={{ padding: "16px 0 8px" }}>
-            <ResponsiveContainer width="100%" height={180}>
-              <AreaChart data={schedule} margin={{ top: 5, right: 20, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="gBal2" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor="#0d7a55" stopOpacity={0.2} />
-                    <stop offset="95%" stopColor="#0d7a55" stopOpacity={0.02} />
-                  </linearGradient>
-                  <linearGradient id="gCon2" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e8e3da" />
-                <XAxis dataKey="year" tick={{ fill: "#8a8fa8", fontSize: 10 }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={v => fmtK(v)} tick={{ fill: "#8a8fa8", fontSize: 10 }} axisLine={false} tickLine={false} width={52} />
-                <Tooltip content={<ChartTip />} />
-                <Area type="monotone" dataKey="contributions" name="Contributed" stroke="#6366f1" fill="url(#gCon2)" strokeWidth={1.5} />
-                <Area type="monotone" dataKey="balance" name="Balance" stroke="#0d7a55" fill="url(#gBal2)" strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
+          <div className="acard-header">
+            <span className="acard-title">Revenue & Cost Inputs</span>
+            <span className="acard-sub" style={{ fontSize:10, color:"var(--ink3)" }}>For proper FCF calculation</span>
           </div>
-
-          <div style={{ padding: "0 20px 16px" }}>
-            <div style={{ display: "flex", gap: 1, height: 8, borderRadius: 99, overflow: "hidden", marginBottom: 12 }}>
-              {[
-                { value: Number(inputs.principal), color: "#6366f1" },
-                { value: totals.totalContrib - Number(inputs.principal), color: "#8b5cf6" },
-                { value: totals.totalInterest, color: "#0d7a55" },
-              ].map((s, i) => {
-                const p = totals.finalBalance > 0 ? (s.value/totals.finalBalance)*100 : 0;
-                return <div key={i} style={{ width: `${p}%`, background: s.color }} />;
-              })}
+          <div className="acard-body">
+            <div style={{ fontSize:11, color:"var(--ink3)", background:"var(--cream)", padding:"8px 10px", borderRadius:6, marginBottom:12 }}>
+              {hasRevenue
+                ? "✅ Using real P&L model — FCF from EBIT × (1-tax) + depreciation"
+                : "⚠️ No revenue entered — using portfolio-growth approximation. Enter revenue for professional accuracy."}
             </div>
-            <div style={{ display: "flex", gap: 20 }}>
+            <div className="input-grid">
               {[
-                { label: "Principal", value: Number(inputs.principal), color: "#6366f1" },
-                { label: "Contributions", value: totals.totalContrib - Number(inputs.principal), color: "#8b5cf6" },
-                { label: "Interest", value: totals.totalInterest, color: "#0d7a55" },
-              ].map(s => (
-                <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: 2, background: s.color }} />
-                  <span style={{ fontSize: 11, color: "var(--ink3)" }}>{s.label}: <strong style={{ color: "var(--ink)" }}>{fmtK(s.value)}</strong></span>
+                { label:"Year 1 Revenue",       key:"revenue",       pre:symbol, min:0,   max:1e10 },
+                { label:"Revenue Growth/yr",    key:"revenueGrowth", suf:"%",    min:-50, max:100  },
+                { label:"COGS (% of revenue)",  key:"cogsPercent",   suf:"%",    min:0,   max:100  },
+                { label:"OpEx (% of revenue)",  key:"opexPercent",   suf:"%",    min:0,   max:100  },
+                { label:"CAPEX (one-time)",      key:"capex",         pre:symbol, min:0,   max:1e10 },
+                { label:"Debt Amount",           key:"debtAmount",    pre:symbol, min:0,   max:1e10 },
+                { label:"Interest Rate on Debt", key:"interestRate",  suf:"%",    min:0,   max:50   },
+              ].map(f => (
+                <div className="input-group" key={f.key}>
+                  <label className="input-label">{f.label}</label>
+                  <div className="input-row-app">
+                    {f.pre && <span className="input-prefix">{f.pre}</span>}
+                    <input className="input-field-app" type="number"
+                      value={inputs[f.key] ?? ""}
+                      min={f.min} max={f.max}
+                      onChange={e => setI(f.key, e.target.value)}
+                      onBlur={e => setV(f.key, e.target.value, f.min, f.max)}
+                      inputMode="decimal" style={{ color:"#0000FF" }} />
+                    {f.suf && <span className="input-suffix">{f.suf}</span>}
+                  </div>
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* P&L preview if revenue entered */}
+      {hasRevenue && schedule.length > 0 && (
+        <div className="acard fade-up" style={{ marginTop:16 }}>
+          <div className="acard-header"><span className="acard-title">P&L Preview (Year 1 vs Final Year)</span></div>
+          <table className="data-table">
+            <thead>
+              <tr><th style={{textAlign:"left"}}>Line Item</th><th>Year 1</th><th>Year {schedule.length}</th><th>Growth</th></tr>
+            </thead>
+            <tbody>
+              {[
+                { label:"Revenue",      k:"revenue"     },
+                { label:"Gross Profit", k:"grossProfit" },
+                { label:"EBITDA",       k:"ebitda"      },
+                { label:"EBIT",         k:"ebit"        },
+                { label:"Net Income",   k:"netIncome"   },
+                { label:"FCF",          k:"fcf"         },
+              ].map(r => {
+                const y1 = schedule[0]?.[r.k] || 0;
+                const yn = schedule[schedule.length-1]?.[r.k] || 0;
+                const growth = y1 !== 0 ? ((yn-y1)/Math.abs(y1))*100 : 0;
+                return (
+                  <tr key={r.label}>
+                    <td style={{textAlign:"left", fontWeight:500}}>{r.label}</td>
+                    <td style={{ color: y1 >= 0 ? "var(--ink)" : "var(--red)" }}>{fmtK(y1)}</td>
+                    <td style={{ color: yn >= 0 ? "var(--emerald)" : "var(--red)", fontWeight:600 }}>{fmtK(yn)}</td>
+                    <td style={{ color: growth >= 0 ? "var(--emerald)" : "var(--red)", fontSize:12 }}>{growth >= 0 ? "+" : ""}{growth.toFixed(1)}%</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Portfolio breakdown */}
+      <div className="acard fade-up" style={{ marginTop:16 }}>
+        <div className="acard-header"><span className="acard-title">Portfolio Breakdown</span></div>
+        <div style={{ padding:"16px 20px" }}>
+          <div style={{ display:"flex", gap:1, height:10, borderRadius:99, overflow:"hidden", marginBottom:12 }}>
+            {[
+              { value: Number(inputs.principal), color:"#6366f1" },
+              { value: totals.totalContrib - Number(inputs.principal), color:"#8b5cf6" },
+              { value: totals.totalInterest, color:"#0d7a55" },
+            ].map((s,i) => {
+              const p = totals.finalBalance > 0 ? (s.value/totals.finalBalance)*100 : 0;
+              return <div key={i} style={{ width:`${p}%`, background:s.color }} />;
+            })}
+          </div>
+          <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
+            {[
+              { label:"Principal",     value:Number(inputs.principal),                           color:"#6366f1" },
+              { label:"Contributions", value:totals.totalContrib - Number(inputs.principal),     color:"#8b5cf6" },
+              { label:"Interest",      value:totals.totalInterest,                               color:"#0d7a55" },
+            ].map(s => (
+              <div key={s.label} style={{ display:"flex", alignItems:"center", gap:5 }}>
+                <div style={{ width:8, height:8, borderRadius:2, background:s.color }} />
+                <span style={{ fontSize:11, color:"var(--ink3)" }}>{s.label}: <strong style={{ color:"var(--ink)" }}>{fmtK(s.value)}</strong></span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -2701,6 +2914,121 @@ function ChartsTab2({ schedule }) {
               </AreaChart>
             )}
           </ResponsiveContainer>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   PROFILE PAGE
+══════════════════════════════════════════════════════════════════════ */
+function ProfilePage({ session, onBack, onLogout }) {
+  const user = session?.user || {};
+  const initials = user.name?.split(" ").map(w => w[0]).join("").toUpperCase().slice(0,2) || "U";
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPw,   setConfirmPw]   = useState("");
+  const [showPw,      setShowPw]      = useState(false);
+  const [pwLoading,   setPwLoading]   = useState(false);
+  const [pwSuccess,   setPwSuccess]   = useState(false);
+  const [pwError,     setPwError]     = useState("");
+
+  const handleChangePassword = async () => {
+    setPwError(""); setPwSuccess(false);
+    if (newPassword.length < 6) { setPwError("Password must be at least 6 characters."); return; }
+    if (newPassword !== confirmPw) { setPwError("Passwords do not match."); return; }
+    setPwLoading(true);
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "apikey": SUPABASE_ANON_KEY, "Authorization": `Bearer ${session.access_token}` },
+      body: JSON.stringify({ password: newPassword }),
+    });
+    const data = await r.json();
+    setPwLoading(false);
+    if (data.error) { setPwError(data.error.message || "Failed to update password."); }
+    else { setPwSuccess(true); setNewPassword(""); setConfirmPw(""); }
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", background:"var(--cream)", fontFamily:"var(--sans)" }}>
+      <div style={{ background:"#fff", borderBottom:"1px solid var(--border)", height:64, display:"flex", alignItems:"center", padding:"0 32px", gap:16, position:"sticky", top:0, zIndex:50 }}>
+        <button onClick={onBack} style={{ display:"flex", alignItems:"center", gap:6, background:"none", border:"none", cursor:"pointer", color:"var(--ink2)", fontSize:14, fontFamily:"var(--sans)" }}>← Back</button>
+        <div style={{ fontFamily:"var(--serif)", fontSize:18, color:"var(--ink)" }}>Capital<span style={{ color:"var(--emerald)" }}>IQ</span></div>
+        <div style={{ fontSize:14, color:"var(--ink3)", marginLeft:8 }}>/ My Profile</div>
+      </div>
+
+      <div style={{ maxWidth:680, margin:"0 auto", padding:"40px 24px" }}>
+
+        <div className="acard fade-up" style={{ marginBottom:20 }}>
+          <div style={{ padding:"28px", display:"flex", alignItems:"center", gap:20 }}>
+            <div style={{ width:64, height:64, borderRadius:"50%", background:"var(--emerald-l)", border:"2px solid var(--emerald)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, fontWeight:700, color:"var(--emerald)", flexShrink:0 }}>{initials}</div>
+            <div>
+              <div style={{ fontFamily:"var(--serif)", fontSize:22, color:"var(--ink)", marginBottom:2 }}>{user.name || "My Account"}</div>
+              <div style={{ fontSize:13, color:"var(--ink3)" }}>{user.email}</div>
+              <span style={{ display:"inline-block", marginTop:6, fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:3, background:"var(--emerald-l)", color:"var(--emerald)", textTransform:"uppercase", letterSpacing:"0.5px" }}>Free Plan</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="acard fade-up fade-up-1" style={{ marginBottom:20 }}>
+          <div className="acard-header"><span className="acard-title">Account Details</span></div>
+          <div className="acard-body" style={{ padding:0 }}>
+            {[
+              { label:"Full Name",    value: user.name  || "—" },
+              { label:"Email",        value: user.email || "—" },
+              { label:"Account Type", value: "Email & Password" },
+              { label:"Plan",         value: "Free" },
+            ].map((r, i, arr) => (
+              <div key={r.label} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 20px", borderBottom: i < arr.length-1 ? "1px solid var(--border)" : "none" }}>
+                <span style={{ fontSize:13, color:"var(--ink3)", fontWeight:500 }}>{r.label}</span>
+                <span style={{ fontSize:13, color:"var(--ink)", fontWeight:500 }}>{r.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="acard fade-up fade-up-2" style={{ marginBottom:20 }}>
+          <div className="acard-header"><span className="acard-title">Change Password</span></div>
+          <div className="acard-body">
+            {pwSuccess && <div className="auth-success" style={{ marginBottom:16 }}>✓ Password updated successfully!</div>}
+            {pwError   && <div className="auth-error"   style={{ marginBottom:16 }}>⚠ {pwError}</div>}
+            <div className="auth-field">
+              <label>New Password</label>
+              <div className="auth-password-wrap">
+                <input className="auth-input" type={showPw ? "text" : "password"} placeholder="Min. 6 characters"
+                  value={newPassword} onChange={e => setNewPassword(e.target.value)} style={{ paddingRight:40 }} />
+                <button className="auth-password-toggle" onClick={() => setShowPw(p => !p)}>{showPw ? "Hide" : "Show"}</button>
+              </div>
+            </div>
+            <div className="auth-field">
+              <label>Confirm New Password</label>
+              <input className={`auth-input ${confirmPw && confirmPw !== newPassword ? "error" : ""}`}
+                type={showPw ? "text" : "password"} placeholder="Repeat new password"
+                value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleChangePassword()} />
+              {confirmPw && confirmPw !== newPassword && <div style={{ fontSize:11, color:"var(--red)", marginTop:4 }}>Passwords don't match</div>}
+            </div>
+            <button className={`auth-btn ${pwLoading ? "loading" : ""}`} onClick={handleChangePassword} disabled={pwLoading} style={{ marginTop:4 }}>
+              {pwLoading ? "" : "Update Password →"}
+            </button>
+          </div>
+        </div>
+
+        <div className="acard fade-up fade-up-3" style={{ border:"1.5px solid #fca5a5" }}>
+          <div className="acard-header" style={{ background:"#fde8e8", borderBottom:"1px solid #fca5a5" }}>
+            <span className="acard-title" style={{ color:"var(--red)" }}>⚠ Account Actions</span>
+          </div>
+          <div className="acard-body">
+            <div style={{ fontSize:13, color:"var(--ink2)", marginBottom:16, lineHeight:1.6 }}>
+              Signing out will end your current session. You can sign back in at any time.
+            </div>
+            <button onClick={onLogout}
+              style={{ padding:"10px 20px", borderRadius:7, border:"1.5px solid var(--red)", background:"none", color:"var(--red)", fontFamily:"var(--sans)", fontSize:14, fontWeight:600, cursor:"pointer", transition:"all 0.15s" }}
+              onMouseEnter={e => e.currentTarget.style.background="#fde8e8"}
+              onMouseLeave={e => e.currentTarget.style.background="none"}>
+              Sign out
+            </button>
+          </div>
         </div>
       </div>
     </div>
