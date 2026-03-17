@@ -1,2442 +1,2021 @@
-import { useState, useEffect, useMemo, createContext, useContext } from "react";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, ReferenceLine } from "recharts";
+import { useState, useEffect, useMemo, useCallback, createContext, useContext } from "react";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+         BarChart, Bar, ReferenceLine, LineChart, Line, ComposedChart } from "recharts";
 
-/* ─── Fonts & global reset ─────────────────────────────────────────── */
-const GlobalStyles = () => (
-  <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+/* ══ SUPABASE ══════════════════════════════════════════════════════════ */
+const SB_URL = 'https://zbluszpcsztpzoskzkiz.supabase.co';
+const SB_KEY = 'sb_publishable_-amT-RfNBnJHgM7M-UNPVg_WEtnxFK6';
+const sbH  = { 'Content-Type':'application/json', apikey:SB_KEY, Authorization:`Bearer ${SB_KEY}` };
+const sbAH = t => ({ ...sbH, Authorization:`Bearer ${t}` });
+const sb = {
+  auth:{
+    signUp:async({email,password,name})=>(await fetch(`${SB_URL}/auth/v1/signup`,{method:'POST',headers:sbH,body:JSON.stringify({email,password,data:{full_name:name}})})).json(),
+    signIn:async({email,password})=>(await fetch(`${SB_URL}/auth/v1/token?grant_type=password`,{method:'POST',headers:sbH,body:JSON.stringify({email,password})})).json(),
+    signOut:async t=>fetch(`${SB_URL}/auth/v1/logout`,{method:'POST',headers:sbAH(t)}),
+    getUser:async t=>(await fetch(`${SB_URL}/auth/v1/user`,{headers:sbAH(t)})).json(),
+    resetPw:async email=>(await fetch(`${SB_URL}/auth/v1/recover`,{method:'POST',headers:sbH,body:JSON.stringify({email,redirect_to:window.location.origin})})).json(),
+    updatePw:async(t,password)=>(await fetch(`${SB_URL}/auth/v1/user`,{method:'PUT',headers:sbAH(t),body:JSON.stringify({password})})).json(),
+  },
+  db:{
+    list:  async t=>(await fetch(`${SB_URL}/rest/v1/projects?select=*&order=updated_at.desc`,{headers:sbAH(t)})).json(),
+    create:async(t,d)=>{const r=await fetch(`${SB_URL}/rest/v1/projects`,{method:'POST',headers:{...sbAH(t),Prefer:'return=representation'},body:JSON.stringify(d)});const j=await r.json();return Array.isArray(j)?j[0]:j;},
+    update:async(t,id,d)=>{const r=await fetch(`${SB_URL}/rest/v1/projects?id=eq.${id}`,{method:'PATCH',headers:{...sbAH(t),Prefer:'return=representation'},body:JSON.stringify({...d,updated_at:new Date().toISOString()})});const j=await r.json();return Array.isArray(j)?j[0]:j;},
+    del:   async(t,id)=>fetch(`${SB_URL}/rest/v1/projects?id=eq.${id}`,{method:'DELETE',headers:sbAH(t)}),
+  },
+};
+function getURLToken(){const h=window.location.hash;if(h&&h.includes('access_token')){const p=new URLSearchParams(h.replace('#',''));const tk=p.get('access_token');if(tk){window.history.replaceState(null,'',window.location.pathname);return tk;}}return null;}
 
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; }
-    body { background: #f7f4ef; font-family: 'DM Sans', sans-serif; color: #0f1117; overflow-x: hidden; }
-
-    :root {
-      --ink:      #0f1117;
-      --ink2:     #3d4152;
-      --ink3:     #8a8fa8;
-      --cream:    #f7f4ef;
-      --cream2:   #eeead8;
-      --emerald:  #0d7a55;
-      --emerald2: #0a6347;
-      --emerald-l:#e6f4ee;
-      --gold:     #c8960c;
-      --gold-l:   #fdf6e3;
-      --red:      #c0392b;
-      --border:   #e0dbd0;
-      --card:     #ffffff;
-      --serif:    'Playfair Display', Georgia, serif;
-      --sans:     'DM Sans', system-ui, sans-serif;
-      --shadow:   0 1px 3px rgba(0,0,0,0.08), 0 8px 32px rgba(0,0,0,0.06);
-      --shadow-lg:0 4px 6px rgba(0,0,0,0.05), 0 24px 64px rgba(0,0,0,0.12);
-    }
-
-    /* ── Nav ── */
-    .nav {
-      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-      background: rgba(247,244,239,0.92);
-      backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--border);
-      padding: 0 32px;
-      height: 64px;
-      display: flex; align-items: center; justify-content: space-between;
-    }
-    .nav-logo { font-family: var(--serif); font-size: 22px; color: var(--ink); font-weight: 700; letter-spacing: -0.5px; cursor:pointer; }
-    .nav-logo span { color: var(--emerald); }
-    .nav-links { display: flex; align-items: center; gap: 28px; }
-    .nav-link { font-size: 14px; color: var(--ink2); text-decoration: none; cursor: pointer; transition: color 0.15s; font-weight: 500; }
-    .nav-link:hover { color: var(--emerald); }
-    .nav-cta {
-      background: var(--ink); color: #fff;
-      padding: 9px 20px; border-radius: 6px;
-      font-size: 13px; font-weight: 600; cursor: pointer;
-      border: none; font-family: var(--sans);
-      transition: background 0.15s;
-    }
-    .nav-cta:hover { background: var(--emerald); }
-
-    /* ── Hero ── */
-    .hero {
-      min-height: 100vh;
-      padding: 120px 32px 80px;
-      display: flex; align-items: center;
-      max-width: 1200px; margin: 0 auto;
-      gap: 64px;
-    }
-    .hero-left { flex: 1; min-width: 0; }
-    .hero-eyebrow {
-      display: inline-flex; align-items: center; gap: 8px;
-      background: var(--emerald-l); color: var(--emerald);
-      font-size: 12px; font-weight: 700; letter-spacing: 0.8px;
-      text-transform: uppercase; padding: 5px 12px; border-radius: 4px;
-      margin-bottom: 24px;
-    }
-    .hero-eyebrow::before { content: ''; width: 6px; height: 6px; background: var(--emerald); border-radius: 50%; }
-    .hero-h1 {
-      font-family: var(--serif);
-      font-size: clamp(38px, 5vw, 60px);
-      line-height: 1.1;
-      letter-spacing: -1px;
-      color: var(--ink);
-      margin-bottom: 22px;
-    }
-    .hero-h1 em { font-style: italic; color: var(--emerald); }
-    .hero-sub {
-      font-size: 17px; color: var(--ink2); line-height: 1.65;
-      max-width: 480px; margin-bottom: 36px; font-weight: 400;
-    }
-    .hero-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-    .btn-primary {
-      background: var(--emerald); color: #fff;
-      padding: 14px 28px; border-radius: 7px;
-      font-size: 15px; font-weight: 600; cursor: pointer;
-      border: none; font-family: var(--sans);
-      transition: all 0.15s; display: flex; align-items: center; gap: 8px;
-    }
-    .btn-primary:hover { background: var(--emerald2); transform: translateY(-1px); box-shadow: 0 8px 24px rgba(13,122,85,0.3); }
-    .btn-secondary {
-      background: transparent; color: var(--ink);
-      padding: 14px 24px; border-radius: 7px;
-      font-size: 15px; font-weight: 500; cursor: pointer;
-      border: 1.5px solid var(--border); font-family: var(--sans);
-      transition: all 0.15s;
-    }
-    .btn-secondary:hover { border-color: var(--ink); background: var(--cream2); }
-    .hero-proof { display: flex; align-items: center; gap: 16px; margin-top: 28px; }
-    .hero-proof-text { font-size: 13px; color: var(--ink3); }
-    .hero-proof-text strong { color: var(--ink); }
-    .hero-stars { color: var(--gold); font-size: 14px; letter-spacing: 1px; }
-
-    /* ── Hero card ── */
-    .hero-right { flex: 0 0 420px; }
-    .hero-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      box-shadow: var(--shadow-lg);
-      overflow: hidden;
-    }
-    .hcard-header {
-      background: var(--ink);
-      padding: 14px 20px;
-      display: flex; align-items: center; justify-content: space-between;
-    }
-    .hcard-title { font-family: var(--serif); color: #fff; font-size: 14px; }
-    .hcard-dots { display: flex; gap: 5px; }
-    .hcard-dot { width: 9px; height: 9px; border-radius: 50%; }
-    .hcard-body { padding: 20px; }
-    .hcard-value {
-      font-family: var(--serif);
-      font-size: 42px; color: var(--emerald);
-      letter-spacing: -1px; line-height: 1;
-      margin-bottom: 4px;
-    }
-    .hcard-label { font-size: 12px; color: var(--ink3); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 16px; }
-    .hcard-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
-    .hcard-stat { background: var(--cream); border-radius: 8px; padding: 10px 12px; }
-    .hcard-stat-val { font-weight: 700; font-size: 16px; color: var(--ink); }
-    .hcard-stat-lbl { font-size: 10px; color: var(--ink3); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
-
-    /* ── Section ── */
-    .section { padding: 96px 32px; }
-    .section-inner { max-width: 1200px; margin: 0 auto; }
-    .section-label {
-      font-size: 11px; font-weight: 700; letter-spacing: 1.2px;
-      text-transform: uppercase; color: var(--emerald);
-      margin-bottom: 14px;
-    }
-    .section-h2 {
-      font-family: var(--serif);
-      font-size: clamp(28px, 4vw, 44px);
-      line-height: 1.15; letter-spacing: -0.5px;
-      color: var(--ink); margin-bottom: 16px;
-    }
-    .section-h2 em { font-style: italic; color: var(--emerald); }
-    .section-sub { font-size: 16px; color: var(--ink2); line-height: 1.6; max-width: 520px; }
-
-    /* ── Problem section ── */
-    .problem-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 24px; margin-top: 48px; }
-    .problem-card {
-      background: var(--card); border: 1px solid var(--border);
-      border-radius: 12px; padding: 28px;
-      position: relative; overflow: hidden;
-    }
-    .problem-card::before {
-      content: ''; position: absolute; top: 0; left: 0; right: 0;
-      height: 3px; background: var(--border);
-    }
-    .problem-icon { font-size: 28px; margin-bottom: 14px; }
-    .problem-title { font-family: var(--serif); font-size: 17px; color: var(--ink); margin-bottom: 8px; font-weight: 600; }
-    .problem-text { font-size: 14px; color: var(--ink2); line-height: 1.6; }
-
-    /* ── Features ── */
-    .features-bg { background: var(--ink); }
-    .features-bg .section-label { color: var(--emerald); }
-    .features-bg .section-h2 { color: #fff; }
-    .features-bg .section-h2 em { color: #7dd3b0; }
-    .features-bg .section-sub { color: #9ca3b8; }
-    .features-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 1px; background: #1e2233; margin-top: 56px; border-radius: 12px; overflow: hidden; }
-    .feature-cell {
-      background: #141827;
-      padding: 32px 28px;
-      transition: background 0.2s;
-    }
-    .feature-cell:hover { background: #1a2135; }
-    .feature-num {
-      font-family: var(--serif); font-size: 36px;
-      color: #2a3350; font-weight: 700;
-      margin-bottom: 16px; line-height: 1;
-    }
-    .feature-title { font-family: var(--serif); font-size: 18px; color: #fff; margin-bottom: 10px; }
-    .feature-text { font-size: 13px; color: #7a84a0; line-height: 1.6; }
-    .feature-tag {
-      display: inline-block; margin-top: 12px;
-      background: #1e2a1a; color: #5cb88a;
-      font-size: 10px; font-weight: 700; letter-spacing: 0.6px;
-      padding: 3px 8px; border-radius: 3px; text-transform: uppercase;
-    }
-
-    /* ── Pricing ── */
-    .pricing-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 20px; margin-top: 52px; }
-    .pricing-card {
-      background: var(--card); border: 1.5px solid var(--border);
-      border-radius: 14px; padding: 32px 28px;
-      position: relative; transition: all 0.2s;
-    }
-    .pricing-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
-    .pricing-card.featured {
-      border-color: var(--emerald);
-      box-shadow: 0 0 0 4px rgba(13,122,85,0.08), var(--shadow-lg);
-    }
-    .pricing-badge {
-      position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
-      background: var(--emerald); color: #fff;
-      font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
-      padding: 4px 14px; border-radius: 20px;
-    }
-    .pricing-tier { font-size: 12px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: var(--ink3); margin-bottom: 10px; }
-    .pricing-price { font-family: var(--serif); font-size: 44px; color: var(--ink); letter-spacing: -1px; line-height: 1; }
-    .pricing-price sup { font-size: 20px; vertical-align: super; font-family: var(--sans); font-weight: 600; }
-    .pricing-price-sub { font-size: 13px; color: var(--ink3); margin-top: 4px; margin-bottom: 6px; }
-    .pricing-desc { font-size: 13px; color: var(--ink2); margin-bottom: 24px; line-height: 1.5; }
-    .pricing-divider { height: 1px; background: var(--border); margin-bottom: 20px; }
-    .pricing-feature { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
-    .pricing-check { color: var(--emerald); font-size: 14px; flex-shrink: 0; margin-top: 1px; }
-    .pricing-feat-text { font-size: 13px; color: var(--ink2); }
-    .btn-plan {
-      width: 100%; padding: 12px; border-radius: 7px;
-      font-size: 14px; font-weight: 600; cursor: pointer;
-      border: none; font-family: var(--sans); margin-top: 20px;
-      transition: all 0.15s;
-    }
-    .btn-plan-outline { background: transparent; color: var(--ink); border: 1.5px solid var(--border); }
-    .btn-plan-outline:hover { border-color: var(--ink); background: var(--cream2); }
-    .btn-plan-filled { background: var(--emerald); color: #fff; }
-    .btn-plan-filled:hover { background: var(--emerald2); }
-    .btn-plan-dark { background: var(--ink); color: #fff; }
-    .btn-plan-dark:hover { background: #222; }
-
-    /* ── Testimonials ── */
-    .testi-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 20px; margin-top: 48px; }
-    .testi-card {
-      background: var(--card); border: 1px solid var(--border);
-      border-radius: 12px; padding: 28px;
-    }
-    .testi-stars { color: var(--gold); font-size: 13px; margin-bottom: 14px; letter-spacing: 2px; }
-    .testi-quote { font-family: var(--serif); font-size: 15px; color: var(--ink); line-height: 1.65; margin-bottom: 18px; font-style: italic; }
-    .testi-author { display: flex; align-items: center; gap: 10px; }
-    .testi-avatar {
-      width: 36px; height: 36px; border-radius: 50%;
-      background: var(--emerald-l); display: flex; align-items: center; justify-content: center;
-      font-size: 14px; font-weight: 700; color: var(--emerald);
-    }
-    .testi-name { font-size: 13px; font-weight: 600; color: var(--ink); }
-    .testi-role { font-size: 11px; color: var(--ink3); }
-
-    /* ── CTA Banner ── */
-    .cta-banner {
-      background: var(--emerald);
-      padding: 80px 32px;
-      text-align: center;
-    }
-    .cta-banner h2 { font-family: var(--serif); font-size: 40px; color: #fff; margin-bottom: 16px; }
-    .cta-banner p { font-size: 16px; color: rgba(255,255,255,0.8); margin-bottom: 32px; }
-    .btn-cta-white {
-      background: #fff; color: var(--emerald);
-      padding: 16px 36px; border-radius: 8px;
-      font-size: 15px; font-weight: 700; cursor: pointer;
-      border: none; font-family: var(--sans);
-      transition: all 0.15s; display: inline-flex; align-items: center; gap: 8px;
-    }
-    .btn-cta-white:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(0,0,0,0.2); }
-
-    /* ── Footer ── */
-    .footer {
-      background: var(--ink); padding: 48px 32px 32px;
-    }
-    .footer-inner { max-width: 1200px; margin: 0 auto; }
-    .footer-top { display: flex; justify-content: space-between; margin-bottom: 40px; }
-    .footer-logo { font-family: var(--serif); font-size: 20px; color: #fff; margin-bottom: 10px; }
-    .footer-logo span { color: #7dd3b0; }
-    .footer-tagline { font-size: 13px; color: #6b7280; max-width: 220px; line-height: 1.5; }
-    .footer-links h4 { font-size: 12px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: #6b7280; margin-bottom: 14px; }
-    .footer-links a { display: block; font-size: 13px; color: #9ca3af; margin-bottom: 8px; cursor: pointer; text-decoration: none; transition: color 0.15s; }
-    .footer-links a:hover { color: #fff; }
-    .footer-bottom { border-top: 1px solid #1e2233; padding-top: 24px; display: flex; justify-content: space-between; align-items: center; }
-    .footer-copy { font-size: 12px; color: #4b5563; }
-
-    /* ── App screen ── */
-    .app-screen {
-      min-height: 100vh;
-      background: var(--cream);
-      padding-top: 64px;
-    }
-    .app-topbar {
-      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-      background: var(--card); border-bottom: 1px solid var(--border);
-      height: 64px; display: flex; align-items: center;
-      padding: 0 24px; gap: 16px;
-    }
-    .app-logo { font-family: var(--serif); font-size: 18px; cursor: pointer; }
-    .app-logo span { color: var(--emerald); }
-    .app-project-name {
-      flex: 1; font-size: 14px; font-weight: 500; color: var(--ink2);
-      padding: 6px 12px; border-radius: 6px; background: var(--cream);
-      border: 1px solid var(--border); cursor: text;
-    }
-    .app-tabs {
-      display: flex; border-bottom: 1px solid var(--border);
-      background: var(--card); padding: 0 24px; gap: 0;
-      overflow-x: auto; scrollbar-width: none;
-    }
-    .app-tabs::-webkit-scrollbar { display: none; }
-    .app-tab {
-      padding: 12px 20px; font-size: 13px; font-weight: 500;
-      color: var(--ink3); cursor: pointer; border-bottom: 2px solid transparent;
-      white-space: nowrap; transition: all 0.15s; border: none; background: none;
-      font-family: var(--sans);
-    }
-    .app-tab.active { color: var(--emerald); border-bottom-color: var(--emerald); }
-    .app-tab:hover:not(.active) { color: var(--ink); }
-    .app-body { max-width: 1100px; margin: 0 auto; padding: 28px 24px; }
-
-    /* ── App cards ── */
-    .acard { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 20px; }
-    .acard-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
-    .acard-title { font-size: 13px; font-weight: 600; color: var(--ink); }
-    .acard-sub { font-size: 12px; color: var(--ink3); }
-    .acard-body { padding: 20px; }
-
-    /* ── KPI bar ── */
-    .kpi-bar { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 20px; }
-    .kpi-box { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
-    .kpi-box-label { font-size: 11px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: var(--ink3); margin-bottom: 6px; }
-    .kpi-box-value { font-family: var(--serif); font-size: 26px; color: var(--ink); letter-spacing: -0.5px; }
-    .kpi-box-value.green { color: var(--emerald); }
-    .kpi-box-value.red   { color: var(--red); }
-    .kpi-box-value.gold  { color: var(--gold); }
-    .kpi-badge { display: inline-flex; align-items: center; gap: 4px; margin-top: 5px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 3px; }
-    .kpi-badge.good { background: var(--emerald-l); color: var(--emerald); }
-    .kpi-badge.bad  { background: #fde8e8; color: var(--red); }
-
-    /* ── Input grid ── */
-    .input-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    .input-group { display: flex; flex-direction: column; gap: 5px; }
-    .input-label { font-size: 12px; font-weight: 600; color: var(--ink2); letter-spacing: 0.3px; }
-    .input-row-app {
-      display: flex; align-items: center;
-      background: var(--cream); border: 1.5px solid var(--border);
-      border-radius: 7px; overflow: hidden; transition: border-color 0.15s;
-    }
-    .input-row-app:focus-within { border-color: var(--emerald); }
-    .input-prefix { padding: 0 10px; font-size: 13px; color: var(--ink3); background: var(--cream2); border-right: 1px solid var(--border); height: 38px; display: flex; align-items: center; }
-    .input-suffix { padding: 0 10px; font-size: 13px; color: var(--ink3); background: var(--cream2); border-left: 1px solid var(--border); height: 38px; display: flex; align-items: center; }
-    .input-field-app {
-      flex: 1; background: none; border: none; outline: none;
-      font-family: var(--sans); font-size: 14px; font-weight: 500;
-      color: var(--ink); padding: 0 12px; height: 38px; text-align: right;
-    }
-    .select-app {
-      flex: 1; background: none; border: none; outline: none;
-      font-family: var(--sans); font-size: 14px; color: var(--ink);
-      padding: 0 12px; height: 38px; cursor: pointer;
-    }
-
-    /* ── Scenario pills ── */
-    .scenario-pills { display: flex; gap: 8px; margin-bottom: 20px; }
-    .scenario-pill {
-      padding: 7px 18px; border-radius: 6px; font-size: 13px; font-weight: 600;
-      cursor: pointer; border: 1.5px solid var(--border); background: var(--card);
-      color: var(--ink2); transition: all 0.15s; font-family: var(--sans);
-    }
-    .scenario-pill:hover { border-color: var(--emerald); color: var(--emerald); }
-    .scenario-pill.active { background: var(--emerald); color: #fff; border-color: var(--emerald); }
-    .scenario-pill.bull { }
-    .scenario-pill.bear { }
-    .scenario-pill.stress { }
-
-    /* ── Table ── */
-    .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .data-table th { background: var(--cream); color: var(--ink2); font-size: 11px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; padding: 9px 14px; text-align: right; border-bottom: 1.5px solid var(--border); }
-    .data-table th:first-child { text-align: left; }
-    .data-table td { padding: 9px 14px; text-align: right; border-bottom: 1px solid var(--border); color: var(--ink); font-variant-numeric: tabular-nums; }
-    .data-table td:first-child { text-align: left; font-weight: 500; }
-    .data-table tr:last-child td { border-bottom: none; }
-    .data-table tr:hover td { background: var(--cream); }
-
-    /* ── Heat map ── */
-    .heat-wrap { overflow-x: auto; }
-    .heat-table { border-collapse: collapse; font-size: 12px; }
-    .heat-table th { background: var(--cream2); color: var(--ink2); padding: 7px 12px; border: 1px solid var(--border); font-size: 11px; text-align: center; white-space: nowrap; }
-    .heat-table td { padding: 7px 10px; border: 1px solid var(--border); text-align: center; white-space: nowrap; font-size: 12px; font-variant-numeric: tabular-nums; }
-    .heat-base-cell { outline: 2px solid var(--emerald); outline-offset: -2px; font-weight: 700; }
-
-    /* ── Tooltip ── */
-    .chart-tip { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; font-size: 12px; box-shadow: var(--shadow); }
-    .chart-tip-label { color: var(--ink3); font-size: 10px; margin-bottom: 5px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
-
-    /* ── Animations ── */
-    @keyframes fadeUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
-    @keyframes countUp { from { opacity:0; } to { opacity:1; } }
-    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
-    .fade-up { animation: fadeUp 0.4s ease both; }
-    .fade-up-1 { animation-delay: 0.08s; }
-    .fade-up-2 { animation-delay: 0.16s; }
-    .fade-up-3 { animation-delay: 0.24s; }
-    .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--emerald); display: inline-block; animation: pulse 2s infinite; }
-
-    @media print {
-      .app-topbar, .app-tabs, .no-print { display: none !important; }
-      .app-screen { padding-top: 0 !important; }
-      .app-body { padding: 0 !important; max-width: 100% !important; }
-      .acard { break-inside: avoid; box-shadow: none !important; border: 1px solid #ddd !important; margin-bottom: 12px !important; }
-      body { background: white !important; }
-      .fade-up { animation: none !important; }
-      @page { margin: 15mm; size: A4; }
-      .print-header { display: block !important; }
-    }
-    .print-header { display: none; }
-      .hero { flex-direction: column; padding: 100px 20px 60px; gap: 40px; }
-      .hero-right { flex: none; width: 100%; }
-      .problem-grid, .features-grid, .pricing-grid, .testi-grid { grid-template-columns: 1fr; }
-      .kpi-bar { grid-template-columns: 1fr 1fr; }
-      .input-grid { grid-template-columns: 1fr; }
-      .nav-links { display: none; }
-    }
-  `}</style>
-);
-
-/* ─── Currencies ───────────────────────────────────────────────────── */
-const CURRENCIES = [
-  { code: "USD", symbol: "$",  name: "US Dollar",         locale: "en-US"  },
-  { code: "EUR", symbol: "€",  name: "Euro",              locale: "de-DE"  },
-  { code: "GBP", symbol: "£",  name: "British Pound",     locale: "en-GB"  },
-  { code: "CHF", symbol: "Fr", name: "Swiss Franc",       locale: "de-CH"  },
-  { code: "SEK", symbol: "kr", name: "Swedish Krona",     locale: "sv-SE"  },
-  { code: "NOK", symbol: "kr", name: "Norwegian Krone",   locale: "nb-NO"  },
-  { code: "DKK", symbol: "kr", name: "Danish Krone",      locale: "da-DK"  },
-  { code: "PLN", symbol: "zł", name: "Polish Złoty",      locale: "pl-PL"  },
-  { code: "CZK", symbol: "Kč", name: "Czech Koruna",      locale: "cs-CZ"  },
-  { code: "HUF", symbol: "Ft", name: "Hungarian Forint",  locale: "hu-HU"  },
-  { code: "RON", symbol: "lei",name: "Romanian Leu",      locale: "ro-RO"  },
-  { code: "JPY", symbol: "¥",  name: "Japanese Yen",      locale: "ja-JP"  },
-  { code: "CNY", symbol: "¥",  name: "Chinese Yuan",      locale: "zh-CN"  },
-  { code: "INR", symbol: "₹",  name: "Indian Rupee",      locale: "en-IN"  },
-  { code: "AUD", symbol: "A$", name: "Australian Dollar", locale: "en-AU"  },
-  { code: "CAD", symbol: "C$", name: "Canadian Dollar",   locale: "en-CA"  },
-  { code: "BRL", symbol: "R$", name: "Brazilian Real",    locale: "pt-BR"  },
-  { code: "AED", symbol: "د.إ",name: "UAE Dirham",        locale: "ar-AE"  },
-  { code: "TRY", symbol: "₺",  name: "Turkish Lira",      locale: "tr-TR"  },
-  { code: "ZAR", symbol: "R",  name: "South African Rand",locale: "en-ZA"  },
+/* ══ CURRENCY ══════════════════════════════════════════════════════════ */
+const CURRENCIES=[
+  {code:"USD",sym:"$",locale:"en-US"},{code:"EUR",sym:"€",locale:"de-DE"},
+  {code:"GBP",sym:"£",locale:"en-GB"},{code:"CHF",sym:"Fr",locale:"de-CH"},
+  {code:"SEK",sym:"kr",locale:"sv-SE"},{code:"NOK",sym:"kr",locale:"nb-NO"},
+  {code:"PLN",sym:"zł",locale:"pl-PL"},{code:"JPY",sym:"¥",locale:"ja-JP"},
+  {code:"INR",sym:"₹",locale:"en-IN"},{code:"AUD",sym:"A$",locale:"en-AU"},
+  {code:"CAD",sym:"C$",locale:"en-CA"},{code:"BRL",sym:"R$",locale:"pt-BR"},
+  {code:"AED",sym:"د.إ",locale:"ar-AE"},{code:"TRY",sym:"₺",locale:"tr-TR"},
 ];
-
-const CurrencyContext = createContext({ code: "USD", symbol: "$", locale: "en-US" });
-const useCurrency = () => useContext(CurrencyContext);
-
-/* ─── Helpers ──────────────────────────────────────────────────────── */
-const makeFmt = (code, locale) => (n) =>
-  new Intl.NumberFormat(locale, { style: "currency", currency: code, maximumFractionDigits: 0 }).format(n);
-
-const makeFmtK = (code, locale, symbol) => (n) => {
-  const a = Math.abs(n);
-  const fmt = makeFmt(code, locale);
-  if (a >= 1e9) return `${symbol}${(n/1e9).toFixed(1)}B`;
-  if (a >= 1e6) return `${symbol}${(n/1e6).toFixed(1)}M`;
-  if (a >= 1e3) return `${symbol}${(n/1e3).toFixed(0)}K`;
-  return fmt(n);
-};
-
-// Default (USD) — overridden by CurrencyContext consumers
-const fmt  = makeFmt("USD", "en-US");
-const fmtK = makeFmtK("USD", "en-US", "$");
-const pct  = (n) => `${Number(n).toFixed(1)}%`;
-
-// Hook that returns currency-aware formatters
-function useFmt() {
-  const cur = useCurrency();
-  return {
-    fmt:  makeFmt(cur.code, cur.locale),
-    fmtK: makeFmtK(cur.code, cur.locale, cur.symbol),
-    symbol: cur.symbol,
-    code: cur.code,
+const CurCtx=createContext({code:"EUR",sym:"€",locale:"de-DE"});
+const useCur=()=>useContext(CurCtx);
+function useFmt(){
+  const c=useCur();
+  const fmt=n=>{
+    if(n===null||n===undefined||!isFinite(n)) return "—";
+    const a=Math.abs(n);
+    if(a>=1e9) return`${n<0?"-":""}${c.sym}${(Math.abs(n)/1e9).toFixed(2)}B`;
+    if(a>=1e6) return`${n<0?"-":""}${c.sym}${(Math.abs(n)/1e6).toFixed(2)}M`;
+    if(a>=1e3) return`${n<0?"-":""}${c.sym}${(Math.abs(n)/1e3).toFixed(0)}K`;
+    return new Intl.NumberFormat(c.locale,{style:"currency",currency:c.code,maximumFractionDigits:0}).format(n);
   };
+  return{fmt,sym:c.sym,code:c.code};
 }
+const pct=(n,d=1)=>(n===null||!isFinite(n)||Math.abs(n)>500)?'—':`${Number(n).toFixed(d)}%`;
+const xN=(n,d=2)=>(n===null||!isFinite(n)||Math.abs(n)>500)?'—':`${Number(n).toFixed(d)}×`;
 
-/* ─── Input sanitizer ─────────────────────────────────────────────── */
-function sanitize(inp) {
-  return {
-    principal:     Math.max(0,   Number(inp.principal)    || 0),
-    monthly:       Math.max(0,   Number(inp.monthly)      || 0),
-    rate:          Math.max(0,   Math.min(100, Number(inp.rate)          || 0)),
-    years:         Math.max(1,   Math.min(50,  Math.round(Number(inp.years) || 1))),
-    compound:      inp.compound  || "monthly",
-    inflation:     Math.max(0,   Math.min(50,  Number(inp.inflation)     || 0)),
-    wacc:          Math.max(0.1, Math.min(100, Number(inp.wacc)          || 10)),
-    tax:           Math.max(0,   Math.min(99,  Number(inp.tax)           || 0)),
-    revenue:       Math.max(0,   Number(inp.revenue)      || 0),
-    revenueGrowth: Math.max(-50, Math.min(100, Number(inp.revenueGrowth) || 5)),
-    cogsPercent:   Math.max(0,   Math.min(100, Number(inp.cogsPercent)   || 55)),
-    opexPercent:   Math.max(0,   Math.min(100, Number(inp.opexPercent)   || 20)),
-    capex:         Math.max(0,   Number(inp.capex)        || 0),
-    debtAmount:    Math.max(0,   Number(inp.debtAmount)   || 0),
-    interestRate:  Math.max(0,   Math.min(50, Number(inp.interestRate)   || 5)),
-  };
-}
+/* ══ FINANCIAL ENGINE ══════════════════════════════════════════════════ */
+const clamp=(v,mn,mx)=>Math.max(mn,Math.min(mx,isFinite(Number(v))?Number(v):mn));
 
-function calcSchedule(rawInputs) {
-  const i = sanitize(rawInputs);
-  const ppy     = i.compound === "monthly" ? 12 : i.compound === "quarterly" ? 4 : 1;
-  const nomRate = i.rate / 100;
-  const inf     = i.inflation / 100;
-  const nomWACC = i.wacc / 100;
-  // Fisher equation: real WACC = (1+nominal)/(1+inflation) - 1
-  const realWACC = inf > 0 ? (1 + nomWACC) / (1 + inf) - 1 : nomWACC;
-  const rp = nomRate / ppy;
-  const annualInterest = i.debtAmount * (i.interestRate / 100);
-  const totalInitial   = i.principal + i.capex;
-  const annualDepr     = i.capex > 0 ? i.capex / i.years : 0;
-
-  let bal = i.principal, contrib = i.principal;
-  let npvNom = -totalInitial, npvReal = -totalInitial;
-  const sched = [];
-
-  for (let y = 1; y <= i.years; y++) {
-    const ys = bal;
-    // Portfolio compounding
-    for (let p = 0; p < ppy; p++) {
-      bal    += i.monthly * (12 / ppy);
-      contrib += i.monthly * (12 / ppy);
-      bal    *= 1 + rp;
+function calcIRR(cfs){
+  const hasPos=cfs.some(v=>v>0), hasNeg=cfs.some(v=>v<0);
+  if(!hasPos||!hasNeg) return null;
+  const npvAt=r=>cfs.reduce((s,v,t)=>s+v/Math.pow(1+r,t),0);
+  const dnpv=r=>cfs.reduce((s,v,t)=>s-t*v/Math.pow(1+r,t+1),0);
+  for(const g of [0.1,0.2,0.5,0.01,-0.05,0.3,0.8]){
+    let r=g;
+    for(let i=0;i<300;i++){
+      const v=npvAt(r),d=dnpv(r);
+      if(!d||!isFinite(d)) break;
+      const nr=r-v/d;
+      if(!isFinite(nr)) break;
+      if(Math.abs(nr-r)<1e-10){r=nr;break;}
+      r=Math.max(-0.999,Math.min(50,nr));
     }
-
-    // ── Proper P&L ──────────────────────────────────────────────
-    const yearRevenue = i.revenue > 0
-      ? i.revenue * Math.pow(1 + i.revenueGrowth / 100, y)
-      : 0;
-    const inflFactor  = Math.pow(1 + inf, y);          // cost inflation
-    const cogs        = yearRevenue * (i.cogsPercent / 100) * inflFactor;
-    const grossProfit = yearRevenue - cogs;
-    const opex        = yearRevenue * (i.opexPercent / 100) * inflFactor;
-    const ebitda      = grossProfit - opex;
-    const ebit        = ebitda - annualDepr;
-    const ebt         = ebit - annualInterest;
-    const taxAmt      = Math.max(0, ebt * (i.tax / 100));
-    const netIncome   = ebt - taxAmt;
-
-    // FCF: if revenue entered use proper EBIT*(1-t)+D; else use portfolio growth net of tax
-    const portfolioGrowth = bal - ys;
-    const fcf = i.revenue > 0
-      ? Math.round(ebit * (1 - i.tax / 100) + annualDepr)
-      : Math.round(portfolioGrowth * (1 - i.tax / 100));
-
-    // Nominal NPV
-    npvNom  += fcf / Math.pow(1 + nomWACC, y);
-    // Real NPV: deflate FCF to real terms first, then discount at real WACC
-    const fcfReal = fcf / inflFactor;
-    npvReal += fcfReal / Math.pow(1 + realWACC, y);
-
-    sched.push({
-      year: y,
-      balance:      Math.round(bal),
-      contributions: Math.round(contrib),
-      interest:     Math.round(bal - contrib),
-      inflationAdj: Math.round(bal / inflFactor),
-      yearGrowth:   Math.round(bal - ys),
-      fcf,
-      cumNPV:       Math.round(npvNom),
-      cumNPVReal:   Math.round(npvReal),
-      revenue:      Math.round(yearRevenue),
-      grossProfit:  Math.round(grossProfit),
-      ebitda:       Math.round(ebitda),
-      ebit:         Math.round(ebit),
-      netIncome:    Math.round(netIncome),
-    });
-  }
-
-  const last = sched[sched.length - 1] || {};
-
-  // IRR (Newton-Raphson)
-  const allFCF = [-totalInitial, ...sched.map(r => r.fcf)];
-  let irr = 0.1;
-  for (let k = 0; k < 200; k++) {
-    const v = allFCF.reduce((s, v, t) => s + v / Math.pow(1 + irr, t), 0);
-    const d = allFCF.reduce((s, v, t) => s - t * v / Math.pow(1 + irr, t + 1), 0);
-    if (!d || Math.abs(d) < 1e-10) break;
-    const next = irr - v / d;
-    if (next < -0.99) { irr = -0.99; break; }
-    irr = next;
-  }
-  const irrReal = isFinite(irr) && inf > 0 ? (1 + irr) / (1 + inf) - 1 : null;
-
-  return {
-    schedule: sched,
-    totals: {
-      finalBalance:  last.balance       || 0,
-      totalContrib:  last.contributions || 0,
-      totalInterest: last.interest      || 0,
-      inflationAdj:  last.inflationAdj  || 0,
-      roi: last.contributions > 0
-        ? ((last.balance - last.contributions) / last.contributions) * 100 : 0,
-      npv:          Math.round(npvNom),
-      npvReal:      Math.round(npvReal),
-      irr:          isFinite(irr) ? irr : null,
-      irrReal,
-      payback: sched.findIndex((r, idx) =>
-        sched.slice(0, idx + 1).reduce((s, x) => s + x.fcf, 0) >= totalInitial
-      ),
-      totalInitial,
-    },
-  };
-}
-
-function heatBg(val, min, max) {
-  const t = max === min ? 0.5 : (val-min)/(max-min);
-  if (t < 0.5) return `rgba(192,57,43,${0.15+t*0.5})`;
-  return `rgba(13,122,85,${0.1+(t-0.5)*0.7})`;
-}
-
-function heatColor(val, min, max) {
-  const t = max === min ? 0.5 : (val-min)/(max-min);
-  return t < 0.3 ? "#7f1d1d" : t > 0.7 ? "#064e3b" : "#374151";
-}
-
-/* ─── Animated counter ─────────────────────────────────────────────── */
-function AnimatedNum({ target }) {
-  const { symbol } = useCurrency();
-  const [display, setDisplay] = useState(0);
-  useEffect(() => {
-    let startTime = null;
-    const dur = 1800;
-    const step = (ts) => {
-      if (!startTime) startTime = ts;
-      const p = Math.min((ts-startTime)/dur, 1);
-      const ease = 1 - Math.pow(1-p, 3);
-      setDisplay(Math.round(ease * target));
-      if (p < 1) requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
-  }, [target]);
-  return <>{symbol}{display.toLocaleString()}</>;
-}
-
-/* ─── Custom chart tooltip ─────────────────────────────────────────── */
-const ChartTip = ({ active, payload, label }) => {
-  const { fmtK } = useFmt();
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="chart-tip">
-      <div className="chart-tip-label">Year {label}</div>
-      {payload.map(p => (
-        <div key={p.name} style={{ color: p.color, fontWeight: 600, fontSize: 13 }}>
-          {p.name}: {fmtK(p.value)}
-        </div>
-      ))}
-    </div>
-  );
-};
-
-/* ══════════════════════════════════════════════════════════════════════
-   AUTH STYLES
-══════════════════════════════════════════════════════════════════════ */
-const AuthStyles = () => (
-  <style>{`
-    .auth-wrap {
-      min-height: 100vh; display: flex;
-      background: var(--cream);
-    }
-    .auth-left {
-      flex: 1; background: var(--ink);
-      display: flex; flex-direction: column;
-      justify-content: center; align-items: center;
-      padding: 60px; position: relative; overflow: hidden;
-    }
-    .auth-left::before {
-      content: '';
-      position: absolute; inset: 0;
-      background: radial-gradient(ellipse at 30% 50%, rgba(13,122,85,0.25) 0%, transparent 70%),
-                  radial-gradient(ellipse at 80% 20%, rgba(13,122,85,0.1) 0%, transparent 60%);
-    }
-    .auth-left-content { position: relative; z-index: 1; max-width: 400px; }
-    .auth-brand { font-family: var(--serif); font-size: 28px; color: #fff; margin-bottom: 40px; }
-    .auth-brand span { color: #7dd3b0; }
-    .auth-tagline { font-family: var(--serif); font-size: 36px; color: #fff; line-height: 1.2; margin-bottom: 20px; letter-spacing: -0.5px; }
-    .auth-tagline em { color: #7dd3b0; font-style: italic; }
-    .auth-sub { font-size: 15px; color: #9ca3b8; line-height: 1.6; margin-bottom: 40px; }
-    .auth-features { display: flex; flex-direction: column; gap: 14px; }
-    .auth-feature { display: flex; align-items: center; gap: 12px; }
-    .auth-feature-icon { width: 32px; height: 32px; border-radius: 8px; background: rgba(13,122,85,0.2); display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; }
-    .auth-feature-text { font-size: 13px; color: #9ca3b8; }
-    .auth-feature-text strong { color: #e2e8f0; }
-
-    .auth-right {
-      width: 480px; flex-shrink: 0;
-      display: flex; flex-direction: column;
-      justify-content: center; padding: 60px 48px;
-      background: #fff;
-    }
-    .auth-form-logo { font-family: var(--serif); font-size: 20px; color: var(--ink); margin-bottom: 32px; display: flex; align-items: center; gap: 8px; }
-    .auth-form-logo span { color: var(--emerald); }
-    .auth-form-logo-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--emerald); }
-    .auth-title { font-family: var(--serif); font-size: 28px; color: var(--ink); margin-bottom: 6px; }
-    .auth-title-sub { font-size: 14px; color: var(--ink3); margin-bottom: 32px; }
-
-    .auth-field { margin-bottom: 16px; }
-    .auth-field label { display: block; font-size: 12px; font-weight: 600; color: var(--ink2); margin-bottom: 6px; letter-spacing: 0.3px; }
-    .auth-input {
-      width: 100%; padding: 11px 14px;
-      border: 1.5px solid var(--border); border-radius: 8px;
-      font-family: var(--sans); font-size: 14px; color: var(--ink);
-      background: var(--cream); outline: none;
-      transition: border-color 0.15s;
-    }
-    .auth-input:focus { border-color: var(--emerald); background: #fff; }
-    .auth-input::placeholder { color: var(--ink3); }
-    .auth-input.error { border-color: var(--red); }
-
-    .auth-btn {
-      width: 100%; padding: 13px;
-      background: var(--emerald); color: #fff;
-      border: none; border-radius: 8px;
-      font-family: var(--sans); font-size: 15px; font-weight: 600;
-      cursor: pointer; transition: all 0.15s; margin-top: 8px;
-      display: flex; align-items: center; justify-content: center; gap: 8px;
-    }
-    .auth-btn:hover:not(:disabled) { background: var(--emerald2); transform: translateY(-1px); box-shadow: 0 6px 20px rgba(13,122,85,0.3); }
-    .auth-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
-    .auth-btn.loading::after { content: ''; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .auth-divider { display: flex; align-items: center; gap: 12px; margin: 20px 0; }
-    .auth-divider::before, .auth-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-    .auth-divider-text { font-size: 12px; color: var(--ink3); white-space: nowrap; }
-
-    .auth-switch { text-align: center; font-size: 13px; color: var(--ink3); margin-top: 20px; }
-    .auth-switch a { color: var(--emerald); font-weight: 600; cursor: pointer; text-decoration: none; }
-    .auth-switch a:hover { text-decoration: underline; }
-
-    .auth-error {
-      background: #fde8e8; border: 1px solid #fca5a5; border-radius: 7px;
-      padding: 10px 14px; font-size: 13px; color: #b91c1c;
-      margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
-    }
-    .auth-success {
-      background: var(--emerald-l); border: 1px solid #86efac; border-radius: 7px;
-      padding: 10px 14px; font-size: 13px; color: var(--emerald);
-      margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
-    }
-    .auth-password-wrap { position: relative; }
-    .auth-password-toggle {
-      position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
-      background: none; border: none; cursor: pointer; color: var(--ink3);
-      font-size: 13px; padding: 2px;
-    }
-    .auth-terms { font-size: 11px; color: var(--ink3); text-align: center; margin-top: 14px; line-height: 1.5; }
-    .auth-terms a { color: var(--emerald); cursor: pointer; }
-
-    /* ── Projects Dashboard ── */
-    .dash-wrap { min-height: 100vh; background: var(--cream); }
-    .dash-topbar {
-      background: #fff; border-bottom: 1px solid var(--border);
-      height: 64px; display: flex; align-items: center;
-      padding: 0 32px; gap: 16px; position: sticky; top: 0; z-index: 50;
-    }
-    .dash-logo { font-family: var(--serif); font-size: 20px; color: var(--ink); }
-    .dash-logo span { color: var(--emerald); }
-    .dash-user { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-    .dash-avatar {
-      width: 34px; height: 34px; border-radius: 50%;
-      background: var(--emerald-l); display: flex; align-items: center; justify-content: center;
-      font-size: 13px; font-weight: 700; color: var(--emerald);
-    }
-    .dash-user-name { font-size: 13px; font-weight: 500; color: var(--ink); }
-    .dash-logout { font-size: 13px; color: var(--ink3); cursor: pointer; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: none; font-family: var(--sans); transition: all 0.15s; }
-    .dash-logout:hover { border-color: var(--red); color: var(--red); background: #fde8e8; }
-
-    .dash-body { max-width: 1100px; margin: 0 auto; padding: 36px 32px; }
-    .dash-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 32px; }
-    .dash-greeting { font-family: var(--serif); font-size: 28px; color: var(--ink); margin-bottom: 4px; }
-    .dash-greeting-sub { font-size: 14px; color: var(--ink3); }
-    .dash-new-btn {
-      background: var(--emerald); color: #fff;
-      padding: 11px 22px; border-radius: 8px;
-      font-size: 14px; font-weight: 600; cursor: pointer;
-      border: none; font-family: var(--sans);
-      display: flex; align-items: center; gap: 8px;
-      transition: all 0.15s;
-    }
-    .dash-new-btn:hover { background: var(--emerald2); transform: translateY(-1px); }
-
-    .dash-stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; margin-bottom: 32px; }
-    .dash-stat { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
-    .dash-stat-label { font-size: 11px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: var(--ink3); margin-bottom: 6px; }
-    .dash-stat-value { font-family: var(--serif); font-size: 26px; color: var(--ink); }
-    .dash-stat-value.green { color: var(--emerald); }
-
-    .dash-section-title { font-size: 13px; font-weight: 700; color: var(--ink2); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 14px; }
-
-    .projects-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
-    .project-card {
-      background: #fff; border: 1.5px solid var(--border);
-      border-radius: 12px; padding: 22px; cursor: pointer;
-      transition: all 0.15s; position: relative; overflow: hidden;
-    }
-    .project-card:hover { border-color: var(--emerald); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
-    .project-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--emerald); opacity: 0; transition: opacity 0.15s; }
-    .project-card:hover::before { opacity: 1; }
-    .project-card-name { font-family: var(--serif); font-size: 16px; color: var(--ink); margin-bottom: 4px; font-weight: 600; }
-    .project-card-date { font-size: 11px; color: var(--ink3); margin-bottom: 14px; }
-    .project-card-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
-    .project-card-kpi { background: var(--cream); border-radius: 6px; padding: 8px 10px; }
-    .project-card-kpi-val { font-size: 14px; font-weight: 700; color: var(--emerald); }
-    .project-card-kpi-lbl { font-size: 10px; color: var(--ink3); text-transform: uppercase; letter-spacing: 0.4px; margin-top: 1px; }
-    .project-card-footer { display: flex; align-items: center; justify-content: space-between; }
-    .project-card-tag { font-size: 10px; font-weight: 700; letter-spacing: 0.5px; padding: 3px 8px; border-radius: 3px; text-transform: uppercase; }
-    .tag-active { background: var(--emerald-l); color: var(--emerald); }
-    .tag-draft  { background: var(--cream2); color: var(--ink3); }
-    .project-card-actions { display: flex; gap: 6px; }
-    .project-action-btn { background: none; border: 1px solid var(--border); border-radius: 5px; padding: 4px 8px; font-size: 11px; cursor: pointer; font-family: var(--sans); color: var(--ink2); transition: all 0.15s; }
-    .project-action-btn:hover { border-color: var(--ink); color: var(--ink); }
-    .project-action-btn.del:hover { border-color: var(--red); color: var(--red); background: #fde8e8; }
-
-    .project-new-card {
-      background: var(--cream); border: 2px dashed var(--border);
-      border-radius: 12px; padding: 22px;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      cursor: pointer; transition: all 0.15s; min-height: 180px; gap: 10px;
-    }
-    .project-new-card:hover { border-color: var(--emerald); background: var(--emerald-l); }
-    .project-new-icon { font-size: 28px; }
-    .project-new-text { font-size: 13px; font-weight: 600; color: var(--ink3); }
-    .project-new-card:hover .project-new-text { color: var(--emerald); }
-
-    /* Modal */
-    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px; }
-    .modal-box { background: #fff; border-radius: 14px; padding: 28px; width: 100%; max-width: 440px; box-shadow: 0 24px 64px rgba(0,0,0,0.2); }
-    .modal-title { font-family: var(--serif); font-size: 22px; color: var(--ink); margin-bottom: 6px; }
-    .modal-sub { font-size: 13px; color: var(--ink3); margin-bottom: 22px; }
-    .modal-actions { display: flex; gap: 10px; margin-top: 22px; }
-    .modal-cancel { flex: 1; padding: 11px; border: 1.5px solid var(--border); border-radius: 7px; background: none; font-family: var(--sans); font-size: 14px; cursor: pointer; color: var(--ink2); }
-    .modal-cancel:hover { border-color: var(--ink); }
-    .modal-confirm { flex: 1; padding: 11px; background: var(--emerald); border: none; border-radius: 7px; font-family: var(--sans); font-size: 14px; font-weight: 600; cursor: pointer; color: #fff; }
-    .modal-confirm:hover { background: var(--emerald2); }
-
-    @media (max-width: 768px) {
-      .auth-left { display: none; }
-      .auth-right { width: 100%; padding: 40px 24px; }
-      .projects-grid { grid-template-columns: 1fr; }
-      .dash-stats { grid-template-columns: 1fr 1fr; }
-    }
-  `}</style>
-);
-
-/* ══════════════════════════════════════════════════════════════════════
-   SUPABASE CONFIG  —  replace with your own keys
-══════════════════════════════════════════════════════════════════════ */
-const SUPABASE_URL      = 'https://zbluszpcsztpzoskzkiz.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_-amT-RfNBnJHgM7M-UNPVg_WEtnxFK6';
-
-// Minimal Supabase client (no npm package needed)
-const sb = (() => {
-  const headers = {
-    'Content-Type': 'application/json',
-    'apikey': SUPABASE_ANON_KEY,
-    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-  };
-
-  const authHeaders = (token) => ({
-    ...headers,
-    'Authorization': `Bearer ${token}`
-  });
-
-  return {
-    auth: {
-      async signUp({ email, password, name }) {
-        const r = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
-          method: 'POST', headers,
-          body: JSON.stringify({ email, password, data: { full_name: name } })
-        });
-        return r.json();
-      },
-      async signIn({ email, password }) {
-        const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-          method: 'POST', headers,
-          body: JSON.stringify({ email, password })
-        });
-        return r.json();
-      },
-      async resetPassword(email) {
-        const r = await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
-          method: 'POST', headers,
-          body: JSON.stringify({ email, redirect_to: window.location.origin })
-        });
-        return r.json();
-      },
-      async signOut(token) {
-        await fetch(`${SUPABASE_URL}/auth/v1/logout`, {
-          method: 'POST', headers: authHeaders(token)
-        });
-      },
-      async getUser(token) {
-        const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-          headers: authHeaders(token)
-        });
-        return r.json();
-      },
-    },
-    db: {
-      async getProjects(token) {
-        const r = await fetch(`${SUPABASE_URL}/rest/v1/projects?select=*&order=updated_at.desc`, {
-          headers: authHeaders(token)
-        });
-        return r.json();
-      },
-      async createProject(token, data) {
-        const r = await fetch(`${SUPABASE_URL}/rest/v1/projects`, {
-          method: 'POST',
-          headers: { ...authHeaders(token), 'Prefer': 'return=representation' },
-          body: JSON.stringify(data)
-        });
-        const json = await r.json();
-        return Array.isArray(json) ? json[0] : json;
-      },
-      async updateProject(token, id, data) {
-        const r = await fetch(`${SUPABASE_URL}/rest/v1/projects?id=eq.${id}`, {
-          method: 'PATCH',
-          headers: { ...authHeaders(token), 'Prefer': 'return=representation' },
-          body: JSON.stringify({ ...data, updated_at: new Date().toISOString() })
-        });
-        const json = await r.json();
-        return Array.isArray(json) ? json[0] : json;
-      },
-      async deleteProject(token, id) {
-        await fetch(`${SUPABASE_URL}/rest/v1/projects?id=eq.${id}`, {
-          method: 'DELETE', headers: authHeaders(token)
-        });
-      },
-    },
-  };
-})();
-
-// Parse Supabase session from URL hash after email confirmation redirect
-function parseSessionFromURL() {
-  const hash = window.location.hash;
-  if (hash && hash.includes('access_token')) {
-    const params = new URLSearchParams(hash.replace('#', ''));
-    const token = params.get('access_token');
-    if (token) {
-      window.history.replaceState(null, '', window.location.pathname);
-      return { access_token: token };
-    }
+    const check=npvAt(r);
+    if(isFinite(r)&&Math.abs(check)<100&&r>-0.999&&r<50) return r;
   }
   return null;
 }
 
-/* ══════════════════════════════════════════════════════════════════════
-   MAIN APP
-══════════════════════════════════════════════════════════════════════ */
-export default function App() {
-  const [screen, setScreen]             = useState("landing");
-  const [currencyCode, setCurrencyCode] = useState("USD");
-  const [session, setSession]           = useState(null);   // { access_token, user: { id, email, name } }
-  const [projects, setProjects]         = useState([]);
-  const [projLoading, setProjLoading]   = useState(false);
-  const [activeProject, setActiveProject] = useState(null);
-  const [showNewModal, setShowNewModal]   = useState(false);
-  const [newProjectName, setNewProjectName] = useState("");
-
-  const cur = CURRENCIES.find(c => c.code === currencyCode) || CURRENCIES[0];
-
-  // On mount: check for session in URL or localStorage
-  useEffect(() => {
-    const urlSession = parseSessionFromURL();
-
-    if (urlSession?.access_token) {
-      sb.auth.getUser(urlSession.access_token).then(user => {
-        if (user?.id) {
-          const sess = {
-            access_token: urlSession.access_token,
-            user: {
-              id: user.id,
-              email: user.email,
-              name: user.user_metadata?.full_name || user.email.split('@')[0]
-            }
-          };
-          setSession(sess);
-          localStorage.setItem('ciq_session', JSON.stringify(sess));
-          setScreen("dashboard");
-        }
-      });
-      return;
-    }
-
-    // Check stored session
-    const stored = localStorage.getItem('ciq_session');
-    if (stored) {
-      try {
-        const sess = JSON.parse(stored);
-        sb.auth.getUser(sess.access_token).then(user => {
-          if (user?.id) {
-            setSession(sess);
-            setScreen("dashboard");
-          } else {
-            localStorage.removeItem('ciq_session');
-          }
-        });
-      } catch {
-        localStorage.removeItem('ciq_session');
-      }
-    }
-  }, []);
-
-  // Load projects when session changes
-  useEffect(() => {
-    if (!session) return;
-    setProjLoading(true);
-    sb.db.getProjects(session.access_token).then(data => {
-      if (Array.isArray(data)) {
-        setProjects(data.map(p => ({
-          id: p.id, name: p.name, status: p.status,
-          npv: p.npv || 0, irr: p.irr || 0, finalValue: p.final_value || 0,
-          date: new Date(p.updated_at).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }),
-          inputs: p.inputs || { principal:10000, monthly:500, rate:7, years:20, compound:"monthly", inflation:2, wacc:10, tax:21 },
-        })));
-      }
-      setProjLoading(false);
-    });
-  }, [session]);
-
-  const handleLogin = (sess) => {
-    setSession(sess);
-    localStorage.setItem('ciq_session', JSON.stringify(sess));
-    setScreen("dashboard");
-  };
-
-  const handleLogout = async () => {
-    if (session) await sb.auth.signOut(session.access_token);
-    localStorage.removeItem('ciq_session');
-    setSession(null);
-    setProjects([]);
-    setScreen("landing");
-  };
-
-  const openProject = (project) => { setActiveProject(project); setScreen("app"); };
-
-  const createProject = async () => {
-    if (!newProjectName.trim() || !session) return;
-    const data = { user_id: session.user.id, name: newProjectName.trim(), inputs: { principal:10000, monthly:500, rate:7, years:20, compound:"monthly", inflation:2, wacc:10, tax:21 }, npv:0, irr:0, final_value:0, status:"draft" };
-    const created = await sb.db.createProject(session.access_token, data);
-    if (created?.id) {
-      const proj = { id:created.id, name:created.name, status:"draft", npv:0, irr:0, finalValue:0, date:"Just now", inputs: data.inputs };
-      setProjects(p => [proj, ...p]);
-      setNewProjectName("");
-      setShowNewModal(false);
-      openProject(proj);
-    }
-  };
-
-  const deleteProject = async (id) => {
-    if (!session) return;
-    await sb.db.deleteProject(session.access_token, id);
-    setProjects(p => p.filter(pr => pr.id !== id));
-  };
-
-  const saveProject = async (id, updatedInputs, updatedTotals) => {
-    if (!session) return;
-    const data = { inputs: updatedInputs, npv: updatedTotals.npv, irr: updatedTotals.irr ? updatedTotals.irr * 100 : 0, final_value: updatedTotals.finalBalance, status:"active" };
-    await sb.db.updateProject(session.access_token, id, data);
-    setProjects(p => p.map(pr => pr.id === id ? { ...pr, ...data, finalValue: data.final_value, date:"Just now" } : pr));
-  };
-
-  return (
-    <CurrencyContext.Provider value={cur}>
-      <GlobalStyles />
-      <AuthStyles />
-      {screen === "landing"   && <LandingPage onLaunch={() => setScreen("login")} />}
-      {screen === "login"     && <LoginPage   onLogin={handleLogin} onSignup={() => setScreen("signup")} onForgot={() => setScreen("forgot")} onBack={() => setScreen("landing")} />}
-      {screen === "signup"    && <SignupPage  onLogin={handleLogin} onSignin={() => setScreen("login")} onBack={() => setScreen("landing")} />}
-      {screen === "forgot"    && <ForgotPage  onBack={() => setScreen("login")} />}
-      {screen === "dashboard" && <Dashboard   session={session} projects={projects} loading={projLoading} onOpen={openProject} onDelete={deleteProject} onLogout={handleLogout} onNew={() => setShowNewModal(true)} currencyCode={currencyCode} setCurrencyCode={setCurrencyCode} onProfile={() => setScreen("profile")} />}
-      {screen === "app"       && <AppScreen   onBack={() => setScreen("dashboard")} currencyCode={currencyCode} setCurrencyCode={setCurrencyCode} project={activeProject} onSave={saveProject} session={session} onShowProfile={() => setScreen("profile")} />}
-      {screen === "profile"   && <ProfilePage session={session} onBack={() => setScreen(activeProject ? "app" : "dashboard")} onLogout={handleLogout} />}
-      {showNewModal && (
-        <div className="modal-overlay" onClick={() => setShowNewModal(false)}>
-          <div className="modal-box" onClick={e => e.stopPropagation()}>
-            <div className="modal-title">New Project</div>
-            <div className="modal-sub">Give your investment analysis a name to get started.</div>
-            <div className="auth-field">
-              <label>Project Name</label>
-              <input className="auth-input" placeholder="e.g. Factory Expansion 2025" value={newProjectName}
-                onChange={e => setNewProjectName(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && createProject()} autoFocus />
-            </div>
-            <div className="modal-actions">
-              <button className="modal-cancel" onClick={() => setShowNewModal(false)}>Cancel</button>
-              <button className="modal-confirm" onClick={createProject}>Create Project →</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </CurrencyContext.Provider>
-  );
+function calcMIRR(cfs,disc){
+  const n=cfs.length-1;
+  if(n<1) return null;
+  let pvN=0,fvP=0;
+  cfs.forEach((v,t)=>{
+    if(v<0) pvN+=Math.abs(v)/Math.pow(1+disc,t);
+    if(v>0) fvP+=v*Math.pow(1+disc,n-t);
+  });
+  if(pvN<=0||fvP<=0) return null;
+  const r=Math.pow(fvP/pvN,1/n)-1;
+  return isFinite(r)&&r>-0.999&&r<50?r:null;
 }
 
-/* ══════════════════════════════════════════════════════════════════════
-   LOGIN PAGE
-══════════════════════════════════════════════════════════════════════ */
-function LoginPage({ onLogin, onSignup, onForgot, onBack }) {
-  const [email, setEmail]       = useState("");
-  const [password, setPassword] = useState("");
-  const [showPw, setShowPw]     = useState(false);
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState("");
+/* ── Default inputs ── */
+const DEF={
+  constructionYears:1,operationYears:5,
+  discountRate:10,taxRate:21,inflationRate:2,
+  revenueLines:[
+    {id:1,name:"Product Sales",d1:1000,d1l:"Units",d2:50,d2l:"Price/unit",growth:5,on:true},
+    {id:2,name:"Service Revenue",d1:0,d1l:"Contracts",d2:0,d2l:"Value each",growth:0,on:false},
+    {id:3,name:"Licensing",d1:0,d1l:"Licences",d2:0,d2l:"Fee each",growth:0,on:false},
+  ],
+  costLines:[
+    {id:1,name:"COGS / Materials",val:0,pctRev:true,pct:55,growth:0,on:true},
+    {id:2,name:"Personnel",val:8000,pctRev:false,pct:0,growth:3,on:true},
+    {id:3,name:"Rent & Facilities",val:3000,pctRev:false,pct:0,growth:2,on:true},
+    {id:4,name:"Sales & Marketing",val:2000,pctRev:false,pct:0,growth:5,on:true},
+    {id:5,name:"G&A",val:1500,pctRev:false,pct:0,growth:2,on:true},
+    {id:6,name:"R&D",val:0,pctRev:false,pct:0,growth:0,on:false},
+  ],
+  capexRows:[
+    {id:1,name:"Machinery & Equipment",amts:[50000,0,0,0,0,0,0],deprM:"SL",deprY:10,on:true},
+    {id:2,name:"IT Systems",amts:[10000,0,0,0,0,0,0],deprM:"SL",deprY:5,on:true},
+    {id:3,name:"Building / Property",amts:[0,0,0,0,0,0,0],deprM:"SL",deprY:30,on:false},
+    {id:4,name:"Vehicles",amts:[0,0,0,0,0,0,0],deprM:"SL",deprY:5,on:false},
+    {id:5,name:"Intangibles",amts:[0,0,0,0,0,0,0],deprM:"SL",deprY:5,on:false},
+  ],
+  receivDays:30,payablDays:45,inventDays:30,
+  debtAmt:30000,intRate:5.5,loanYrs:5,
+  useTv:true,tvMethod:"perpetuity",tvGrowth:2,evMult:8,
+};
 
-  const handleSubmit = async () => {
-    setError("");
-    if (!email || !password) { setError("Please fill in all fields."); return; }
-    if (!email.includes("@")) { setError("Please enter a valid email address."); return; }
-    if (password.length < 6)  { setError("Password must be at least 6 characters."); return; }
-    setLoading(true);
-    const data = await sb.auth.signIn({ email, password });
-    setLoading(false);
-    if (data.error || !data.access_token) {
-      setError(data.error?.message || data.msg || "Invalid email or password.");
-      return;
-    }
-    const user = await sb.auth.getUser(data.access_token);
-    onLogin({ access_token: data.access_token, user: { id: user.id, email: user.email, name: user.user_metadata?.full_name || user.email.split('@')[0] } });
-  };
+function calcFinancials(raw){
+  const inp={...DEF,...raw};
+  const opsY=clamp(inp.constructionYears,0,5);
+  const opY=clamp(inp.operationYears,1,30);
+  const yrs=opsY+opY;
+  const disc=clamp(inp.discountRate,0.1,100)/100;
+  const tax=clamp(inp.taxRate,0,99)/100;
+  const inf=clamp(inp.inflationRate,0,50)/100;
 
-  const handleGoogle = () => {
-    setGoogleLoading(true);
-    sb.auth.signInWithGoogle();
-  };
+  // Revenue
+  const rev=Array.from({length:yrs},(_,yi)=>{
+    if(yi<opsY) return 0;
+    const oy=yi-opsY+1;
+    return(inp.revenueLines||[]).filter(r=>r.on).reduce((s,r)=>{
+      const base=(Number(r.d1)||0)*(Number(r.d2)||0);
+      return s+base*Math.pow(1+clamp(r.growth,-50,100)/100,oy-1);
+    },0);
+  });
 
-  return (
-    <div className="auth-wrap">
-      <div className="auth-left">
-        <div className="auth-left-content">
-          <div className="auth-brand">Capital<span>IQ</span></div>
-          <div className="auth-tagline">Your investments.<br /><em>Analysed properly.</em></div>
-          <div className="auth-sub">Professional DCF valuation and scenario analysis for businesses that make serious investment decisions.</div>
-          <div className="auth-features">
-            {[
-              { icon: "📊", title: "Save unlimited projects", desc: "All your investment analyses in one place" },
-              { icon: "🔄", title: "Sync across devices",     desc: "Access from laptop, phone or tablet" },
-              { icon: "👥", title: "Share with your team",    desc: "Collaborate on investment decisions together" },
-              { icon: "📄", title: "Export PDF reports",      desc: "Board-ready reports in one click" },
-            ].map(f => (
-              <div className="auth-feature" key={f.title}>
-                <div className="auth-feature-icon">{f.icon}</div>
-                <div className="auth-feature-text"><strong>{f.title}</strong> — {f.desc}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+  // Costs
+  const cost=Array.from({length:yrs},(_,yi)=>{
+    if(yi<opsY) return 0;
+    const oy=yi-opsY+1;
+    return(inp.costLines||[]).filter(c=>c.on).reduce((s,c)=>{
+      const base=c.pctRev?rev[yi]*clamp(c.pct,0,100)/100:Number(c.val||0)*Math.pow(1+clamp(c.growth,-50,100)/100,oy-1);
+      return s+base;
+    },0);
+  });
 
-      <div className="auth-right">
-        <div className="auth-form-logo"><div className="auth-form-logo-dot" />Capital<span>IQ</span></div>
-        <div className="auth-title">Welcome back</div>
-        <div className="auth-title-sub">Sign in to your account to continue</div>
+  // CAPEX + Depreciation
+  const capex=Array(yrs).fill(0),depr=Array(yrs).fill(0);
+  (inp.capexRows||[]).filter(r=>r.on).forEach(cr=>{
+    let total=0;
+    (cr.amts||[]).forEach((a,i)=>{if(i<yrs){const v=Number(a)||0;capex[i]+=v;total+=v;}});
+    if(total<=0||cr.deprM==="None") return;
+    const dy=clamp(cr.deprY,1,50);
+    const ann=total/dy;
+    const st=(cr.amts||[]).findIndex(a=>Number(a)>0);
+    const s=st>=0?st:0;
+    for(let y=s;y<Math.min(s+dy,yrs);y++) depr[y]+=ann;
+  });
+  const totCapex=capex.reduce((a,b)=>a+b,0);
 
-        {error && <div className="auth-error">⚠ {error}</div>}
+  // Debt service
+  const intArr=Array(yrs).fill(0);
+  let bal=Number(inp.debtAmt)||0;
+  const iR=clamp(inp.intRate,0,50)/100;
+  const lT=clamp(inp.loanYrs,1,30);
+  const ann=lT>0?bal/lT:0;
+  for(let y=0;y<Math.min(lT,yrs);y++){intArr[y]=bal*iR;bal=Math.max(0,bal-ann);}
 
-        <div className="auth-field">
-          <label>Email address</label>
-          <input className={`auth-input ${error && !email ? "error" : ""}`} type="email" placeholder="you@company.com"
-            value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} />
-        </div>
+  // Working capital
+  const wc=rev.map((r,yi)=>{
+    if(yi<opsY) return 0;
+    const rc=r*clamp(inp.receivDays,0,365)/365;
+    const py=cost[yi]*clamp(inp.payablDays,0,365)/365;
+    const iv=cost[yi]*clamp(inp.inventDays,0,365)/365;
+    return rc+iv-py;
+  });
+  const dwc=wc.map((w,i)=>w-(i>0?wc[i-1]:0));
 
-        <div className="auth-field">
-          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
-            <label style={{ margin:0 }}>Password</label>
-            <span onClick={onForgot} style={{ fontSize:12, color:"var(--emerald)", cursor:"pointer", fontWeight:600 }}>Forgot password?</span>
-          </div>
-          <div className="auth-password-wrap">
-            <input className="auth-input" type={showPw ? "text" : "password"} placeholder="••••••••"
-              value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} style={{ paddingRight:40 }} />
-            <button className="auth-password-toggle" onClick={() => setShowPw(p => !p)}>{showPw ? "Hide" : "Show"}</button>
-          </div>
-        </div>
+  // P&L
+  const gp=rev.map((r,i)=>r-cost[i]);
+  const ebitda=gp.slice();
+  const ebit=ebitda.map((e,i)=>e-depr[i]);
+  const ebt=ebit.map((e,i)=>e-intArr[i]);
+  const txA=ebt.map(e=>Math.max(0,e*tax));
+  const ni=ebt.map((e,i)=>e-txA[i]);
 
-        <button className={`auth-btn ${loading ? "loading" : ""}`} onClick={handleSubmit} disabled={loading}>
-          {loading ? "" : "Sign in →"}
-        </button>
+  // FCF
+  const fcf=Array.from({length:yrs},(_,i)=>ebit[i]*(1-tax)+depr[i]-capex[i]-dwc[i]);
 
-        <div className="auth-switch">Don't have an account? <a onClick={onSignup}>Create one free →</a></div>
-        <div className="auth-switch" style={{ marginTop:8 }}><a onClick={onBack} style={{ color:"var(--ink3)" }}>← Back to home</a></div>
-      </div>
-    </div>
-  );
-}
-
-/* ══════════════════════════════════════════════════════════════════════
-   SIGNUP PAGE
-══════════════════════════════════════════════════════════════════════ */
-function SignupPage({ onLogin, onSignin, onBack }) {
-  const [name, setName]         = useState("");
-  const [email, setEmail]       = useState("");
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm]   = useState("");
-  const [showPw, setShowPw]     = useState(false);
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState("");
-  const [success, setSuccess]   = useState(false);
-
-  const strength = password.length === 0 ? 0 : password.length < 6 ? 1 : password.length < 10 ? 2 : /[A-Z]/.test(password) && /[0-9]/.test(password) ? 4 : 3;
-  const strengthLabel = ["", "Weak", "Fair", "Good", "Strong"];
-  const strengthColor = ["", "var(--red)", "var(--gold)", "var(--emerald)", "var(--emerald)"];
-
-  const handleSubmit = async () => {
-    setError("");
-    if (!name.trim())         { setError("Please enter your name."); return; }
-    if (!email.includes("@")) { setError("Please enter a valid email address."); return; }
-    if (password.length < 6)  { setError("Password must be at least 6 characters."); return; }
-    if (password !== confirm)  { setError("Passwords do not match."); return; }
-    setLoading(true);
-    const data = await sb.auth.signUp({ email, password, name: name.trim() });
-    setLoading(false);
-    if (data.error) { setError(data.error.message || "Sign up failed. Please try again."); return; }
-    if (data.access_token) {
-      const user = await sb.auth.getUser(data.access_token);
-      onLogin({ access_token: data.access_token, user: { id: user.id, email: user.email, name: name.trim() } });
+  // Terminal value
+  let tv=0;
+  if(inp.useTv&&fcf.length>0){
+    const lastFCF=fcf[fcf.length-1];
+    const tg=clamp(inp.tvGrowth,-5,20)/100;
+    if(inp.tvMethod==="perpetuity"){
+      tv=(disc>tg&&lastFCF>0)?lastFCF*(1+tg)/(disc-tg):0;
     } else {
-      setSuccess(true);
+      const lastEBITDA=ebitda[ebitda.length-1];
+      tv=lastEBITDA>0?lastEBITDA*clamp(inp.evMult,1,50):0;
     }
+  }
+  const tvPV=totCapex>0&&tv>0?tv/Math.pow(1+disc,yrs):0;
+
+  // NPV
+  let npv=-totCapex+tvPV;
+  const cumNpv=[];
+  for(let i=0;i<fcf.length;i++){
+    npv+=fcf[i]/Math.pow(1+disc,i+1);
+    cumNpv.push(Math.round(npv));
+  }
+
+  // Real NPV
+  const realW=(1+disc)/(1+inf)-1;
+  let npvR=totCapex>0?-totCapex:0;
+  for(let i=0;i<fcf.length;i++){
+    const rFCF=fcf[i]/(1+inf>0?Math.pow(1+inf,i+1):1);
+    npvR+=rFCF/Math.pow(1+realW,i+1);
+  }
+  if(tvPV>0) npvR+=tvPV;
+
+  // IRR — only if we have actual investment
+  const irrCFs=[-totCapex,...fcf];
+  if(tv>0) irrCFs[irrCFs.length-1]+=tv;
+  const irr=totCapex>10?calcIRR(irrCFs):null;
+  const mirr=totCapex>10?calcMIRR(irrCFs,disc):null;
+
+  // Payback
+  let cum=-totCapex,pb=-1;
+  for(let i=0;i<fcf.length;i++){cum+=fcf[i];if(cum>=0&&pb<0)pb=i+1;}
+
+  // EVA, RONA, PI
+  const eva=ebit.map(e=>e*(1-tax)-disc*totCapex);
+  const pi=totCapex>0?(npv+totCapex)/totCapex:0;
+  const activeNI=ni.filter(v=>v!==0);
+  const avgNI=activeNI.length?activeNI.reduce((a,b)=>a+b,0)/activeNI.length:0;
+  const netA=Math.max(1,totCapex-depr.reduce((a,b)=>a+b,0));
+  const rona=avgNI/netA;
+
+  const sched=Array.from({length:yrs},(_,i)=>({
+    year:i+1,phase:i<opsY?"Construction":"Operation",
+    revenue:Math.round(rev[i]),costs:Math.round(cost[i]),
+    grossProfit:Math.round(gp[i]),ebitda:Math.round(ebitda[i]),
+    ebit:Math.round(ebit[i]),ebt:Math.round(ebt[i]),
+    netIncome:Math.round(ni[i]),depreciation:Math.round(depr[i]),
+    capex:Math.round(capex[i]),interest:Math.round(intArr[i]),
+    wcChange:Math.round(dwc[i]),fcf:Math.round(fcf[i]),
+    cumNPV:cumNpv[i],eva:Math.round(eva[i]),
+  }));
+
+  return{
+    sched,npv:Math.round(npv),npvR:Math.round(npvR),
+    irr,mirr,pb,pi:isFinite(pi)?pi:0,rona:isFinite(rona)?rona:0,
+    totalEVA:eva.reduce((a,b)=>a+b,0),
+    totCapex,totRev:rev.reduce((a,b)=>a+b,0),
+    totCost:cost.reduce((a,b)=>a+b,0),
+    totFCF:fcf.reduce((a,b)=>a+b,0),
+    tv:Math.round(tv),tvPV:Math.round(tvPV),
   };
-
-  if (success) return (
-    <div className="auth-wrap" style={{ justifyContent:"center" }}>
-      <div className="auth-right" style={{ width:"100%", maxWidth:480 }}>
-        <div className="auth-form-logo"><div className="auth-form-logo-dot" />Capital<span>IQ</span></div>
-        <div className="auth-success">✓ Check your email! We sent a confirmation link to <strong>{email}</strong>.</div>
-        <button className="auth-btn" onClick={onSignin} style={{ marginTop:16 }}>Back to sign in →</button>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="auth-wrap">
-      <div className="auth-left">
-        <div className="auth-left-content">
-          <div className="auth-brand">Capital<span>IQ</span></div>
-          <div className="auth-tagline">Start making<br /><em>smarter decisions</em><br />today.</div>
-          <div className="auth-sub">Join businesses who use CapitalIQ to analyse investments, reduce risk, and grow with confidence.</div>
-          <div className="auth-features">
-            {[
-              { icon: "🆓", title: "Free to start",         desc: "No credit card required" },
-              { icon: "⚡", title: "Ready in 60 seconds",   desc: "Run your first analysis immediately" },
-              { icon: "🔒", title: "Bank-grade security",   desc: "Your data is encrypted and never shared" },
-              { icon: "📈", title: "Proven methodology",    desc: "Goldman Sachs-standard DCF models" },
-            ].map(f => (
-              <div className="auth-feature" key={f.title}>
-                <div className="auth-feature-icon">{f.icon}</div>
-                <div className="auth-feature-text"><strong>{f.title}</strong> — {f.desc}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-      <div className="auth-right">
-        <div className="auth-form-logo"><div className="auth-form-logo-dot" />Capital<span>IQ</span></div>
-        <div className="auth-title">Create your account</div>
-        <div className="auth-title-sub">Free forever on your first project</div>
-        {error && <div className="auth-error">⚠ {error}</div>}
-
-        <div className="auth-field">
-          <label>Full name</label>
-          <input className="auth-input" type="text" placeholder="Your Name" value={name} onChange={e => setName(e.target.value)} />
-        </div>
-        <div className="auth-field">
-          <label>Work email</label>
-          <input className="auth-input" type="email" placeholder="you@company.com" value={email} onChange={e => setEmail(e.target.value)} />
-        </div>
-        <div className="auth-field">
-          <label>Password</label>
-          <div className="auth-password-wrap">
-            <input className="auth-input" type={showPw ? "text" : "password"} placeholder="Min. 6 characters"
-              value={password} onChange={e => setPassword(e.target.value)} style={{ paddingRight:40 }} />
-            <button className="auth-password-toggle" onClick={() => setShowPw(p => !p)}>{showPw ? "Hide" : "Show"}</button>
-          </div>
-          {password.length > 0 && (
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6 }}>
-              <div style={{ flex:1, height:3, borderRadius:99, background:"var(--border)", overflow:"hidden" }}>
-                <div style={{ width:`${(strength/4)*100}%`, height:"100%", background: strengthColor[strength], borderRadius:99, transition:"all 0.3s" }} />
-              </div>
-              <span style={{ fontSize:11, color: strengthColor[strength], fontWeight:600 }}>{strengthLabel[strength]}</span>
-            </div>
-          )}
-        </div>
-        <div className="auth-field">
-          <label>Confirm password</label>
-          <input className={`auth-input ${confirm && confirm !== password ? "error" : ""}`}
-            type={showPw ? "text" : "password"} placeholder="Repeat password"
-            value={confirm} onChange={e => setConfirm(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} />
-          {confirm && confirm !== password && <div style={{ fontSize:11, color:"var(--red)", marginTop:4 }}>Passwords don't match</div>}
-        </div>
-
-        <button className={`auth-btn ${loading ? "loading" : ""}`} onClick={handleSubmit} disabled={loading}>
-          {loading ? "" : "Create free account →"}
-        </button>
-        <div className="auth-terms">By signing up you agree to our <a>Terms of Service</a> and <a>Privacy Policy</a></div>
-        <div className="auth-switch">Already have an account? <a onClick={onSignin}>Sign in →</a></div>
-      </div>
-    </div>
-  );
 }
 
-/* ══════════════════════════════════════════════════════════════════════
-   FORGOT PASSWORD PAGE
-══════════════════════════════════════════════════════════════════════ */
-function ForgotPage({ onBack }) {
-  const [email, setEmail]     = useState("");
-  const [loading, setLoading] = useState(false);
-  const [sent, setSent]       = useState(false);
-  const [error, setError]     = useState("");
-
-  const handleSubmit = async () => {
-    if (!email.includes("@")) { setError("Please enter a valid email."); return; }
-    setLoading(true);
-    await sb.auth.resetPassword(email);
-    setLoading(false);
-    setSent(true);
-  };
-
-  return (
-    <div className="auth-wrap">
-      <div className="auth-left">
-        <div className="auth-left-content">
-          <div className="auth-brand">Capital<span>IQ</span></div>
-          <div className="auth-tagline">We'll get you<br /><em>back in</em><br />quickly.</div>
-          <div className="auth-sub">Enter your email and we'll send a secure reset link. Takes less than a minute.</div>
-        </div>
-      </div>
-      <div className="auth-right">
-        <div className="auth-form-logo"><div className="auth-form-logo-dot" />Capital<span>IQ</span></div>
-        <div className="auth-title">Reset password</div>
-        <div className="auth-title-sub">We'll email you a reset link</div>
-        {sent ? (
-          <>
-            <div className="auth-success">✓ Reset link sent! Check your inbox and spam folder.</div>
-            <button className="auth-btn" onClick={onBack} style={{ marginTop:16 }}>Back to sign in →</button>
-          </>
-        ) : (
-          <>
-            {error && <div className="auth-error">⚠ {error}</div>}
-            <div className="auth-field">
-              <label>Email address</label>
-              <input className="auth-input" type="email" placeholder="you@company.com"
-                value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} autoFocus />
-            </div>
-            <button className={`auth-btn ${loading ? "loading" : ""}`} onClick={handleSubmit} disabled={loading}>
-              {loading ? "" : "Send reset link →"}
-            </button>
-            <div className="auth-switch"><a onClick={onBack}>← Back to sign in</a></div>
-          </>
-        )}
-      </div>
-    </div>
-  );
+function doBreakEven(inp,key){
+  const bounds={discountRate:[0.5,80],taxRate:[1,98],inflationRate:[0,40],tvGrowth:[-4,18],intRate:[0,40]};
+  const[lo0,hi0]=bounds[key]||[0,100];
+  const npvAt=v=>calcFinancials({...DEF,...inp,[key]:v}).npv;
+  const vLo=npvAt(lo0),vHi=npvAt(hi0);
+  if(!isFinite(vLo)||!isFinite(vHi)) return null;
+  if(vLo*vHi>0) return null;
+  let lo=lo0,hi=hi0;
+  for(let i=0;i<120;i++){
+    const mid=(lo+hi)/2,v=npvAt(mid);
+    if(!isFinite(v)) return null;
+    if(Math.abs(v)<5) return mid;
+    if((vLo<0)===(v<0)) lo=mid; else hi=mid;
+  }
+  return(lo+hi)/2;
 }
 
-/* ══════════════════════════════════════════════════════════════════════
-   PROJECTS DASHBOARD
-══════════════════════════════════════════════════════════════════════ */
-function Dashboard({ session, projects, loading, onOpen, onDelete, onLogout, onNew, currencyCode, setCurrencyCode, onProfile }) {
-  const { fmtK } = useFmt();
-  const user     = session?.user || {};
-  const initials = user.name?.split(" ").map(w => w[0]).join("").toUpperCase().slice(0,2) || "U";
-  const totalValue = projects.reduce((s,p) => s + (p.finalValue||0), 0);
-  const avgIrr     = projects.length ? projects.reduce((s,p) => s + (p.irr||0), 0) / projects.length : 0;
-  const profitable = projects.filter(p => p.npv > 0).length;
+/* ══ APPLE HIG DESIGN SYSTEM — PREMIUM TIER ════════════════════════════ */
+const Styles=()=>(
+<style>{`
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+  html{font-size:15px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;scroll-behavior:smooth;}
+  body{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;background:var(--bg);color:var(--text-primary);overflow-x:hidden;}
 
-  return (
-    <div className="dash-wrap">
-      <div className="dash-topbar">
-        <div className="dash-logo">Capital<span>IQ</span></div>
-        <div className="dash-user">
-          <select value={currencyCode} onChange={e => setCurrencyCode(e.target.value)}
-            style={{ background:"var(--cream)", border:"1px solid var(--border)", borderRadius:6, padding:"5px 8px", fontSize:12, fontWeight:600, color:"var(--emerald)", fontFamily:"var(--sans)", cursor:"pointer", outline:"none" }}>
-            {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.symbol} {c.code}</option>)}
-          </select>
-          {/* Profile button */}
-          <button onClick={onProfile}
-            style={{ display:"flex", alignItems:"center", gap:8, background:"var(--cream)", border:"1px solid var(--border)", borderRadius:8, padding:"5px 12px 5px 5px", cursor:"pointer", fontFamily:"var(--sans)", transition:"all 0.15s" }}
-            onMouseEnter={e => e.currentTarget.style.borderColor="var(--emerald)"}
-            onMouseLeave={e => e.currentTarget.style.borderColor="var(--border)"}>
-            <div className="dash-avatar">{initials}</div>
-            <div style={{ textAlign:"left" }}>
-              <div style={{ fontSize:12, fontWeight:600, color:"var(--ink)" }}>{user.name || "My Account"}</div>
-              <div style={{ fontSize:10, color:"var(--ink3)" }}>View profile</div>
-            </div>
-          </button>
-          <button className="dash-logout" onClick={onLogout}>Sign out</button>
-        </div>
-      </div>
+  /* ── LIGHT MODE TOKENS ── */
+  :root{
+    /* Backgrounds — layered depth */
+    --bg:#f5f5f7;
+    --bg2:#ffffff;
+    --bg3:#f0f0f5;
+    --bg-mesh:linear-gradient(135deg,#f5f5f7 0%,#efeff4 50%,#f5f5f7 100%);
 
-      <div className="dash-body">
-        <div className="dash-header">
-          <div>
-            <div className="dash-greeting">Good day, {user.name?.split(" ")[0] || "there"} 👋</div>
-            <div className="dash-greeting-sub">{loading ? "Loading your projects..." : `You have ${projects.length} investment ${projects.length === 1 ? "project" : "projects"}`}</div>
-          </div>
-          <button className="dash-new-btn" onClick={onNew}>+ New Project</button>
-        </div>
+    /* Glassmorphism surfaces */
+    --surface:rgba(255,255,255,0.78);
+    --surface2:rgba(255,255,255,0.92);
+    --surface-solid:#ffffff;
+    --glass:rgba(255,255,255,0.62);
+    --glass-stroke:rgba(255,255,255,0.9);
+    --glass-inner:rgba(255,255,255,0.4);
 
-        {/* Stats */}
-        {projects.length > 0 && (
-          <div className="dash-stats">
-            {[
-              { label: "Total Projects",  value: projects.length,          cls: "" },
-              { label: "Combined Value",  value: fmtK(totalValue),         cls: "green" },
-              { label: "Profitable",      value: `${profitable}/${projects.length}`, cls: "green" },
-              { label: "Avg IRR",         value: pct(avgIrr),              cls: "" },
-            ].map(s => (
-              <div className="dash-stat" key={s.label}>
-                <div className="dash-stat-label">{s.label}</div>
-                <div className={`dash-stat-value ${s.cls}`}>{s.value}</div>
-              </div>
-            ))}
-          </div>
-        )}
+    /* Text — Apple's exact system grays */
+    --text-primary:#1d1d1f;
+    --text-secondary:#424245;
+    --text-tertiary:#86868b;
+    --text-quaternary:#b0b0b6;
 
-        <div className="dash-section-title">Your Projects</div>
+    /* Separators */
+    --sep:rgba(0,0,0,0.08);
+    --sep2:rgba(0,0,0,0.05);
+    --sep-solid:#e0e0e5;
 
-        {/* Onboarding empty state */}
-        {!loading && projects.length === 0 && (
-          <div style={{ textAlign:"center", padding:"60px 20px", background:"var(--card)", borderRadius:16, border:"2px dashed var(--border)", marginBottom:20 }}>
-            <div style={{ fontSize:48, marginBottom:16 }}>📊</div>
-            <div style={{ fontFamily:"var(--serif)", fontSize:24, color:"var(--ink)", marginBottom:8 }}>Welcome to CapitalIQ</div>
-            <div style={{ fontSize:14, color:"var(--ink2)", marginBottom:8, maxWidth:420, margin:"0 auto 24px" }}>
-              Create your first investment project to get started. You'll get professional DCF analysis, scenario planning, sensitivity analysis and a full investment proposal — in minutes.
-            </div>
-            <div style={{ display:"flex", gap:12, justifyContent:"center", flexWrap:"wrap", marginBottom:24 }}>
-              {[
-                { icon:"💰", text:"DCF & NPV / IRR" },
-                { icon:"🎭", text:"4 Scenario types" },
-                { icon:"📈", text:"Financial Ratios" },
-                { icon:"📄", text:"PDF Proposal" },
-              ].map(f => (
-                <div key={f.text} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", background:"var(--cream)", borderRadius:8, fontSize:13, color:"var(--ink2)" }}>
-                  <span>{f.icon}</span><span>{f.text}</span>
-                </div>
-              ))}
-            </div>
-            <button className="dash-new-btn" onClick={onNew} style={{ margin:"0 auto" }}>
-              + Create your first project
-            </button>
-          </div>
-        )}
+    /* SF System Colors */
+    --blue:#0071e3;
+    --blue-light:#147ce5;
+    --blue-bg:rgba(0,113,227,0.09);
+    --blue-ring:rgba(0,113,227,0.25);
+    --green:#1d8348;
+    --green-vivid:#34c759;
+    --green-bg:rgba(29,131,72,0.09);
+    --red:#d93025;
+    --red-vivid:#ff3b30;
+    --red-bg:rgba(217,48,37,0.09);
+    --amber:#b45309;
+    --amber-vivid:#ff9500;
+    --amber-bg:rgba(180,83,9,0.09);
+    --purple:#6b21a8;
+    --purple-vivid:#af52de;
+    --purple-bg:rgba(107,33,168,0.09);
+    --indigo:#4f46e5;
 
-        {loading && (
-          <div style={{ textAlign:"center", padding:"40px", color:"var(--ink3)", fontSize:14 }}>
-            Loading your projects...
-          </div>
-        )}
+    /* Fills */
+    --fill1:rgba(0,0,0,0.05);
+    --fill2:rgba(0,0,0,0.08);
+    --fill3:rgba(0,0,0,0.12);
+    --fill4:rgba(0,0,0,0.18);
 
-        <div className="projects-grid">
-          {projects.map(p => (
-            <div className="project-card" key={p.id} onClick={() => onOpen(p)}>
-              <div className="project-card-name">{p.name}</div>
-              <div className="project-card-date">Last edited {p.date}</div>
-              <div className="project-card-kpis">
-                <div className="project-card-kpi">
-                  <div className="project-card-kpi-val" style={{ color: p.npv >= 0 ? "var(--emerald)" : "var(--red)" }}>{fmtK(p.npv)}</div>
-                  <div className="project-card-kpi-lbl">NPV</div>
-                </div>
-                <div className="project-card-kpi">
-                  <div className="project-card-kpi-val">{pct(p.irr)}</div>
-                  <div className="project-card-kpi-lbl">IRR</div>
-                </div>
-                <div className="project-card-kpi">
-                  <div className="project-card-kpi-val">{fmtK(p.finalValue)}</div>
-                  <div className="project-card-kpi-lbl">Final Value</div>
-                </div>
-                <div className="project-card-kpi">
-                  <div className="project-card-kpi-val" style={{ color: p.npv >= 0 ? "var(--emerald)" : "var(--red)" }}>{p.npv >= 0 ? "✓ Go" : "✗ Review"}</div>
-                  <div className="project-card-kpi-lbl">Decision</div>
-                </div>
-              </div>
-              <div className="project-card-footer">
-                <span className={`project-card-tag ${p.status === "active" ? "tag-active" : "tag-draft"}`}>{p.status}</span>
-                <div className="project-card-actions" onClick={e => e.stopPropagation()}>
-                  <button className="project-action-btn" onClick={() => onOpen(p)}>Open</button>
-                  <button className="project-action-btn del" onClick={() => onDelete(p.id)}>Delete</button>
-                </div>
-              </div>
-            </div>
-          ))}
-          {projects.length > 0 && (
-            <div className="project-new-card" onClick={onNew}>
-              <div className="project-new-icon">＋</div>
-              <div className="project-new-text">New Project</div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
+    /* Elevation shadows — Apple's exact multi-layer approach */
+    --elev0:none;
+    --elev1:0 1px 2px rgba(0,0,0,0.05),0 0 0 0.5px rgba(0,0,0,0.04);
+    --elev2:0 2px 6px rgba(0,0,0,0.06),0 0 0 0.5px rgba(0,0,0,0.04),inset 0 1px 0 rgba(255,255,255,0.9);
+    --elev3:0 4px 16px rgba(0,0,0,0.07),0 1px 4px rgba(0,0,0,0.04),0 0 0 0.5px rgba(0,0,0,0.04);
+    --elev4:0 8px 28px rgba(0,0,0,0.10),0 3px 8px rgba(0,0,0,0.06),0 0 0 0.5px rgba(0,0,0,0.04);
+    --elev5:0 20px 60px rgba(0,0,0,0.14),0 8px 20px rgba(0,0,0,0.08),0 0 0 0.5px rgba(0,0,0,0.04);
 
-/* ══════════════════════════════════════════════════════════════════════
-   LANDING PAGE
-══════════════════════════════════════════════════════════════════════ */
-function LandingPage({ onLaunch }) {
-  const demoInputs = { principal: 10000, monthly: 500, rate: 7, years: 20, compound: "monthly", inflation: 2, wacc: 10 };
-  const { totals, schedule } = useMemo(() => calcSchedule(demoInputs), []);
+    /* Glass shadow */
+    --glass-shadow:0 8px 32px rgba(0,0,0,0.08),0 2px 8px rgba(0,0,0,0.04),inset 0 1px 0 rgba(255,255,255,0.9);
 
-  return (
-    <div>
-      {/* Nav */}
-      <nav className="nav">
-        <div className="nav-logo">Capital<span>IQ</span></div>
-        <div className="nav-links">
-          <span className="nav-link" onClick={() => document.getElementById("features")?.scrollIntoView({behavior:"smooth"})}>Features</span>
-          <span className="nav-link">Docs</span>
-          <span className="nav-link">Blog</span>
-        </div>
-        <div style={{ display:"flex", gap:8 }}>
-          <button className="nav-cta" style={{ background:"transparent", color:"var(--ink)", border:"1.5px solid var(--border)" }} onClick={onLaunch}>Sign in</button>
-          <button className="nav-cta" onClick={onLaunch}>Get started free →</button>
-        </div>
-      </nav>
+    /* Geometry */
+    --r-xs:6px;--r-sm:10px;--r:14px;--r-lg:18px;--r-xl:22px;--r-2xl:28px;--r-3xl:36px;
+    --sidebar-w:252px;
+    --topbar-h:50px;
 
-      {/* Hero */}
-      <section style={{ background: "var(--cream)" }}>
-        <div className="hero">
-          <div className="hero-left fade-up">
-            <div className="hero-eyebrow">Investment Analysis Platform</div>
-            <h1 className="hero-h1">
-              Make better investments.<br />
-              <em>In minutes, not days.</em>
-            </h1>
-            <p className="hero-sub">
-              Professional DCF valuation, Monte Carlo simulation and scenario analysis — built for SMEs who need Goldman Sachs-quality decisions without the Goldman Sachs price tag.
-            </p>
-            <div className="hero-actions">
-              <button className="btn-primary" onClick={onLaunch}>
-                Create free account →
-              </button>
-              <button className="btn-secondary" onClick={onLaunch}>⚡ Try demo instantly</button>
-            </div>
-            <div className="hero-proof">
-              <div className="hero-stars">★★★★★</div>
-              <div className="hero-proof-text">
-                <strong>4.9/5</strong> from 200+ businesses · No credit card required
-              </div>
-            </div>
-          </div>
+    /* Motion */
+    --ease-spring:cubic-bezier(0.34,1.56,0.64,1);
+    --ease-out:cubic-bezier(0.16,1,0.3,1);
+    --dur-fast:120ms;--dur:200ms;--dur-slow:350ms;
+  }
 
-          <div className="hero-right fade-up fade-up-1">
-            <div className="hero-card">
-              <div className="hcard-header">
-                <span className="hcard-title">New Factory Investment — Base Case</span>
-                <div className="hcard-dots">
-                  <div className="hcard-dot" style={{ background: "#ef4444" }} />
-                  <div className="hcard-dot" style={{ background: "#f59e0b" }} />
-                  <div className="hcard-dot" style={{ background: "#22c55e" }} />
-                </div>
-              </div>
-              <div className="hcard-body">
-                <div className="hcard-label">Final Portfolio Value</div>
-                <div className="hcard-value">
-                  <AnimatedNum target={totals.finalBalance} />
-                </div>
-                <div className="hcard-stats">
-                  {[
-                    { label: "NPV", value: fmtK(totals.npv), color: totals.npv >= 0 ? "var(--emerald)" : "var(--red)" },
-                    { label: "IRR", value: totals.irr ? pct(totals.irr*100) : "N/A", color: "var(--ink)" },
-                    { label: "ROI", value: pct(totals.roi), color: "var(--emerald)" },
-                    { label: "Payback", value: totals.payback >= 0 ? `${totals.payback+1} yrs` : ">10y", color: "var(--ink)" },
-                  ].map(s => (
-                    <div className="hcard-stat" key={s.label}>
-                      <div className="hcard-stat-val" style={{ color: s.color }}>{s.value}</div>
-                      <div className="hcard-stat-lbl">{s.label}</div>
-                    </div>
-                  ))}
-                </div>
-                <ResponsiveContainer width="100%" height={90}>
-                  <AreaChart data={schedule} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="gHero" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#0d7a55" stopOpacity={0.25} />
-                        <stop offset="95%" stopColor="#0d7a55" stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <Area type="monotone" dataKey="balance" stroke="#0d7a55" fill="url(#gHero)" strokeWidth={2} dot={false} />
-                  </AreaChart>
-                </ResponsiveContainer>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-                  <div className="live-dot" />
-                  <span style={{ fontSize: 11, color: "var(--ink3)" }}>Live calculation · Updates as you type</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+  /* ── DARK MODE — TRUE OLED BLACK ── */
+  @media(prefers-color-scheme:dark){:root{
+    --bg:#000000;
+    --bg2:#0a0a0a;
+    --bg3:#111111;
+    --bg-mesh:linear-gradient(135deg,#000 0%,#080808 50%,#000 100%);
 
-      {/* Problem */}
-      <section className="section" style={{ background: "var(--cream2)" }}>
-        <div className="section-inner">
-          <div className="section-label">The Problem</div>
-          <h2 className="section-h2">Investment analysis is <em>broken</em> for SMEs</h2>
-          <p className="section-sub">Most small businesses make €500,000+ investment decisions with a gut feeling and a basic spreadsheet.</p>
-          <div className="problem-grid">
-            {[
-              { icon: "💸", title: "Enterprise tools cost a fortune", text: "Invest for Excel charges €400–900 per license. Bloomberg Terminal is €25,000/year. Built for banks, priced for banks." },
-              { icon: "😵", title: "Excel models are error-prone", text: "88% of spreadsheets contain errors. One wrong formula in a CAPEX model and you approve a project that loses money." },
-              { icon: "⏳", title: "Consultants take weeks", text: "Hiring an analyst to build a DCF model takes 2–4 weeks and costs €5,000–20,000. Decisions can't wait that long." },
-            ].map(p => (
-              <div className="problem-card" key={p.title}>
-                <div className="problem-icon">{p.icon}</div>
-                <div className="problem-title">{p.title}</div>
-                <div className="problem-text">{p.text}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+    --surface:rgba(28,28,28,0.88);
+    --surface2:rgba(36,36,36,0.94);
+    --surface-solid:#1a1a1a;
+    --glass:rgba(26,26,26,0.72);
+    --glass-stroke:rgba(255,255,255,0.07);
+    --glass-inner:rgba(255,255,255,0.04);
 
-      {/* Features */}
-      <section className="section features-bg" id="features">
-        <div className="section-inner">
-          <div className="section-label">What You Get</div>
-          <h2 className="section-h2">Everything a finance team has.<br /><em>Without the finance team.</em></h2>
-          <p className="section-sub" style={{ color: "#9ca3b8" }}>Every feature modelled on professional investment appraisal methodology — accessible to anyone.</p>
-          <div className="features-grid">
-            {[
-              { n: "01", title: "DCF Valuation", text: "Full discounted cash flow with NPV, IRR, MIRR, Payback Period and Profitability Index. The same methodology used by investment banks.", tag: "Core" },
-              { n: "02", title: "Scenario Manager", text: "Switch between Base, Bull, Bear and Stress Test scenarios with one click. See exactly how your investment performs when things go wrong.", tag: "Scenarios" },
-              { n: "03", title: "Monte Carlo", text: "Run 1,000 simulations with randomised inputs. Know the probability your investment hits €1M. Quantify risk properly.", tag: "Pro" },
-              { n: "04", title: "Sensitivity Analysis", text: "Heat map tables and tornado charts showing which variables matter most. WACC sensitivity, revenue sensitivity, CAPEX overrun impact.", tag: "Analysis" },
-              { n: "05", title: "3-Statement Model", text: "Income Statement, Cash Flow, and Balance Sheet all linked and auto-calculated. Professional financial modelling, zero manual work.", tag: "Pro" },
-              { n: "06", title: "Export to Excel & PDF", text: "One-click export to a fully formatted Excel file or a board-ready PDF report. Industry-standard colour coding included.", tag: "Export" },
-            ].map(f => (
-              <div className="feature-cell" key={f.n}>
-                <div className="feature-num">{f.n}</div>
-                <div className="feature-title">{f.title}</div>
-                <div className="feature-text">{f.text}</div>
-                <div className="feature-tag">{f.tag}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+    --text-primary:#f5f5f7;
+    --text-secondary:rgba(245,245,247,0.65);
+    --text-tertiary:rgba(245,245,247,0.38);
+    --text-quaternary:rgba(245,245,247,0.22);
 
-      {/* CTA */}
-      <div className="cta-banner">
-        <h2>Start your first analysis today</h2>
-        <p>Free forever on your first project. No credit card required.</p>
-        <div style={{ display:"flex", gap:12, justifyContent:"center", flexWrap:"wrap" }}>
-          <button className="btn-cta-white" onClick={onLaunch}>
-            Create free account →
-          </button>
-          <button onClick={onLaunch} style={{ padding:"16px 28px", borderRadius:8, fontSize:15, fontWeight:600, cursor:"pointer", border:"2px solid rgba(255,255,255,0.4)", background:"transparent", color:"#fff", fontFamily:"var(--sans)", transition:"all 0.15s" }}
-            onMouseEnter={e => e.currentTarget.style.borderColor="rgba(255,255,255,0.8)"}
-            onMouseLeave={e => e.currentTarget.style.borderColor="rgba(255,255,255,0.4)"}>
-            ⚡ Try demo — no sign up
-          </button>
-        </div>
-      </div>
+    --sep:rgba(255,255,255,0.08);
+    --sep2:rgba(255,255,255,0.04);
+    --sep-solid:#2a2a2a;
 
-      {/* Footer */}
-      <footer className="footer">
-        <div className="footer-inner">
-          <div className="footer-top">
-            <div>
-              <div className="footer-logo">Capital<span>IQ</span></div>
-              <div className="footer-tagline">Professional investment analysis for businesses that mean business.</div>
-            </div>
-            <div style={{ display: "flex", gap: 48 }}>
-              {[
-                { title: "Product", links: ["Features", "Pricing", "Changelog", "Roadmap"] },
-                { title: "Company", links: ["About", "Blog", "Careers", "Contact"] },
-                { title: "Legal", links: ["Privacy", "Terms", "Security", "Cookies"] },
-              ].map(col => (
-                <div className="footer-links" key={col.title}>
-                  <h4>{col.title}</h4>
-                  {col.links.map(l => <a key={l}>{l}</a>)}
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="footer-bottom">
-            <div className="footer-copy">© 2025 CapitalIQ. All rights reserved.</div>
-            <div className="footer-copy">Made for SMEs who think big.</div>
-          </div>
-        </div>
-      </footer>
-    </div>
-  );
-}
+    --blue:#2196f3;
+    --blue-light:#42a5f5;
+    --blue-bg:rgba(33,150,243,0.14);
+    --blue-ring:rgba(33,150,243,0.3);
+    --green:#22c55e;
+    --green-vivid:#30d158;
+    --green-bg:rgba(34,197,94,0.13);
+    --red:#f44336;
+    --red-vivid:#ff453a;
+    --red-bg:rgba(244,67,54,0.13);
+    --amber:#f59e0b;
+    --amber-vivid:#ff9f0a;
+    --amber-bg:rgba(245,158,11,0.13);
+    --purple:#a855f7;
+    --purple-vivid:#bf5af2;
+    --purple-bg:rgba(168,85,247,0.13);
+    --indigo:#6366f1;
 
-/* ══════════════════════════════════════════════════════════════════════
-   FINANCIAL RATIOS TAB
-══════════════════════════════════════════════════════════════════════ */
-function RatiosTab({ inputs, totals, schedule }) {
-  const { fmtK, symbol } = useFmt();
+    --fill1:rgba(255,255,255,0.05);
+    --fill2:rgba(255,255,255,0.09);
+    --fill3:rgba(255,255,255,0.14);
+    --fill4:rgba(255,255,255,0.20);
 
-  // Derive approximate financials from inputs & schedule
-  const lastYr   = schedule[schedule.length - 1] || {};
-  const midYr    = schedule[Math.floor(schedule.length / 2)] || lastYr;
-  const revenue  = lastYr.balance   * 0.18 || 0;   // approx revenue as % of portfolio
-  const cogs     = revenue * 0.55;
-  const grossP   = revenue - cogs;
-  const opex     = revenue * 0.15;
-  const ebitda   = grossP - opex;
-  const ebit     = ebitda - (lastYr.balance * 0.03 || 0);
-  const interest = Number(inputs.principal) * 0.055;
-  const ebt      = ebit - interest;
-  const tax      = Math.max(0, ebt * (Number(inputs.tax) / 100));
-  const netInc   = ebt - tax;
-  const totalAssets = lastYr.balance || 1;
-  const equity   = totalAssets * 0.55;
-  const debt     = totalAssets * 0.45;
-  const currAssets = totalAssets * 0.35;
-  const currLiab   = totalAssets * 0.20;
-  const inventory  = currAssets * 0.30;
-  const cash       = currAssets * 0.25;
+    --elev0:none;
+    --elev1:0 1px 2px rgba(0,0,0,0.5),0 0 0 0.5px rgba(255,255,255,0.06);
+    --elev2:0 2px 8px rgba(0,0,0,0.6),0 0 0 0.5px rgba(255,255,255,0.07),inset 0 1px 0 rgba(255,255,255,0.06);
+    --elev3:0 4px 16px rgba(0,0,0,0.7),0 1px 4px rgba(0,0,0,0.5),0 0 0 0.5px rgba(255,255,255,0.07);
+    --elev4:0 8px 28px rgba(0,0,0,0.8),0 3px 8px rgba(0,0,0,0.6),0 0 0 0.5px rgba(255,255,255,0.07);
+    --elev5:0 20px 60px rgba(0,0,0,0.9),0 8px 20px rgba(0,0,0,0.7),0 0 0 0.5px rgba(255,255,255,0.07);
+    --glass-shadow:0 8px 32px rgba(0,0,0,0.5),0 2px 8px rgba(0,0,0,0.3),inset 0 1px 0 rgba(255,255,255,0.06);
+  }}
 
-  const ratioGroups = [
-    {
-      group: "📈 Profitability Ratios",
-      color: "#0d7a55",
-      ratios: [
-        { name: "Gross Profit Margin",    value: revenue > 0 ? (grossP/revenue)*100 : 0,      fmt: "pct",   bench: "> 40%",  good: grossP/revenue > 0.40 },
-        { name: "EBITDA Margin",          value: revenue > 0 ? (ebitda/revenue)*100 : 0,       fmt: "pct",   bench: "> 20%",  good: ebitda/revenue > 0.20 },
-        { name: "Net Profit Margin",      value: revenue > 0 ? (netInc/revenue)*100 : 0,       fmt: "pct",   bench: "> 10%",  good: netInc/revenue > 0.10 },
-        { name: "Return on Assets (ROA)", value: totalAssets > 0 ? (netInc/totalAssets)*100 : 0, fmt: "pct", bench: "> 5%",   good: netInc/totalAssets > 0.05 },
-        { name: "Return on Equity (ROE)", value: equity > 0 ? (netInc/equity)*100 : 0,          fmt: "pct", bench: "> 15%",  good: netInc/equity > 0.15 },
-        { name: "Return on Investment",   value: totals.roi,                                     fmt: "pct", bench: "> 20%",  good: totals.roi > 20 },
-      ],
-    },
-    {
-      group: "💧 Liquidity Ratios",
-      color: "#1565c0",
-      ratios: [
-        { name: "Current Ratio",          value: currLiab > 0 ? currAssets/currLiab : 0,         fmt: "x",   bench: "> 1.5×", good: currAssets/currLiab > 1.5 },
-        { name: "Quick Ratio",            value: currLiab > 0 ? (currAssets-inventory)/currLiab : 0, fmt: "x", bench: "> 1.0×", good: (currAssets-inventory)/currLiab > 1.0 },
-        { name: "Cash Ratio",             value: currLiab > 0 ? cash/currLiab : 0,                fmt: "x",   bench: "> 0.5×", good: cash/currLiab > 0.5 },
-        { name: "Operating Cash Flow Ratio", value: currLiab > 0 ? (lastYr.fcf||0)/currLiab : 0, fmt: "x",   bench: "> 0.8×", good: (lastYr.fcf||0)/currLiab > 0.8 },
-      ],
-    },
-    {
-      group: "⚖️ Leverage / Solvency Ratios",
-      color: "#7b1fa2",
-      ratios: [
-        { name: "Debt-to-Equity",         value: equity > 0 ? debt/equity : 0,                  fmt: "x",   bench: "< 2.0×", good: debt/equity < 2.0 },
-        { name: "Debt-to-Assets",         value: totalAssets > 0 ? debt/totalAssets : 0,         fmt: "x",   bench: "< 0.6×", good: debt/totalAssets < 0.6 },
-        { name: "Interest Coverage (ICR)",value: interest > 0 ? ebit/interest : 0,               fmt: "x",   bench: "> 3.0×", good: ebit/interest > 3.0 },
-        { name: "Debt Service Coverage",  value: interest > 0 ? ebitda/interest : 0,             fmt: "x",   bench: "> 2.0×", good: ebitda/interest > 2.0 },
-        { name: "Equity Multiplier",      value: equity > 0 ? totalAssets/equity : 0,            fmt: "x",   bench: "< 3.0×", good: totalAssets/equity < 3.0 },
-      ],
-    },
-    {
-      group: "⚙️ Efficiency Ratios",
-      color: "#e65100",
-      ratios: [
-        { name: "Asset Turnover",         value: totalAssets > 0 ? revenue/totalAssets : 0,      fmt: "x",   bench: "> 0.5×", good: revenue/totalAssets > 0.5 },
-        { name: "Inventory Turnover",     value: inventory > 0 ? cogs/inventory : 0,             fmt: "x",   bench: "> 4.0×", good: cogs/inventory > 4.0 },
-        { name: "Receivables Turnover",   value: revenue > 0 ? revenue/(currAssets*0.4) : 0,     fmt: "x",   bench: "> 6.0×", good: revenue/(currAssets*0.4) > 6.0 },
-        { name: "Days Sales Outstanding", value: revenue > 0 ? ((currAssets*0.4)/revenue)*365 : 0, fmt: "days", bench: "< 45 days", good: ((currAssets*0.4)/revenue)*365 < 45 },
-        { name: "Capital Employed Return",value: (totalAssets-currLiab) > 0 ? (ebit/(totalAssets-currLiab))*100 : 0, fmt: "pct", bench: "> 12%", good: ebit/(totalAssets-currLiab) > 0.12 },
-      ],
-    },
-    {
-      group: "📊 Investment Ratios",
-      color: "#c8960c",
-      ratios: [
-        { name: "NPV",                    value: totals.npv,                                     fmt: "money", bench: "> 0",   good: totals.npv > 0 },
-        { name: "IRR",                    value: totals.irr ? totals.irr * 100 : 0,              fmt: "pct",   bench: `> ${inputs.wacc}%`, good: totals.irr > inputs.wacc/100 },
-        { name: "Profitability Index",    value: Number(inputs.principal) > 0 ? (totals.npv + Number(inputs.principal)) / Number(inputs.principal) : 0, fmt: "x", bench: "> 1.0×", good: totals.npv > 0 },
-        { name: "Payback Period",         value: totals.payback >= 0 ? totals.payback + 1 : 99,  fmt: "yrs",   bench: "< 7 yrs", good: totals.payback >= 0 && totals.payback < 6 },
-        { name: "ROI",                    value: totals.roi,                                     fmt: "pct",   bench: "> 0%",  good: totals.roi > 0 },
-      ],
-    },
-  ];
+  /* ── TYPOGRAPHY — DM Sans (SF Pro feel) ── */
+  .t-display{font-size:36px;font-weight:700;letter-spacing:-1px;line-height:1.08;}
+  .t-title1{font-size:26px;font-weight:700;letter-spacing:-0.6px;line-height:1.15;}
+  .t-title2{font-size:20px;font-weight:700;letter-spacing:-0.4px;line-height:1.2;}
+  .t-title3{font-size:17px;font-weight:600;letter-spacing:-0.2px;line-height:1.3;}
+  .t-headline{font-size:14px;font-weight:600;line-height:1.4;letter-spacing:-0.1px;}
+  .t-body{font-size:14px;font-weight:400;line-height:1.55;}
+  .t-callout{font-size:13px;font-weight:400;line-height:1.45;}
+  .t-footnote{font-size:12px;font-weight:400;color:var(--text-tertiary);line-height:1.4;}
+  .t-caption{font-size:11px;font-weight:500;letter-spacing:0.5px;text-transform:uppercase;color:var(--text-tertiary);}
+  .t-num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1,"salt" 1;}
+  .t-mono{font-family:'DM Mono',ui-monospace,monospace;font-size:13px;letter-spacing:-0.2px;}
 
-  const fmtVal = (v, fmt) => {
-    if (fmt === "pct")   return `${v.toFixed(1)}%`;
-    if (fmt === "x")     return `${v.toFixed(2)}×`;
-    if (fmt === "days")  return `${v.toFixed(0)} days`;
-    if (fmt === "yrs")   return v >= 99 ? ">10 yrs" : `${v.toFixed(0)} yrs`;
-    if (fmt === "money") return fmtK(v);
-    return v.toFixed(2);
-  };
+  /* ── SHELL LAYOUT ── */
+  .app-shell{display:flex;height:100dvh;overflow:hidden;background:var(--bg);}
 
-  return (
-    <div>
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontFamily:"var(--serif)", fontSize:24, color:"var(--ink)", marginBottom:4 }}>Financial Ratios</div>
-        <div style={{ fontSize:13, color:"var(--ink3)" }}>Comprehensive ratio analysis derived from your investment parameters · Green = meets benchmark</div>
-      </div>
+  /* ── SIDEBAR — TRUE GLASSMORPHISM ── */
+  .sidebar{
+    width:var(--sidebar-w);flex-shrink:0;
+    display:flex;flex-direction:column;
+    position:relative;z-index:20;
+    /* Multi-layer glass */
+    background:var(--surface);
+    backdrop-filter:saturate(200%) blur(28px);
+    -webkit-backdrop-filter:saturate(200%) blur(28px);
+    border-right:1px solid var(--sep);
+    /* Inner highlight */
+    box-shadow:inset -1px 0 0 var(--glass-stroke);
+  }
+  /* Subtle noise texture on sidebar */
+  .sidebar::before{
+    content:'';position:absolute;inset:0;pointer-events:none;
+    background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    opacity:0.4;z-index:0;border-radius:inherit;
+  }
+  .sidebar>*{position:relative;z-index:1;}
 
-      {ratioGroups.map(group => (
-        <div className="acard fade-up" key={group.group} style={{ marginBottom: 16 }}>
-          <div className="acard-header">
-            <span className="acard-title" style={{ color: group.color }}>{group.group}</span>
-          </div>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th style={{ textAlign:"left" }}>Ratio</th>
-                <th>Value</th>
-                <th>Benchmark</th>
-                <th>Status</th>
-                <th>Assessment</th>
-              </tr>
-            </thead>
-            <tbody>
-              {group.ratios.map(r => (
-                <tr key={r.name}>
-                  <td style={{ textAlign:"left", fontWeight:500 }}>{r.name}</td>
-                  <td style={{ fontWeight:700, color: r.good ? "var(--emerald)" : "var(--red)" }}>
-                    {fmtVal(r.value, r.fmt)}
-                  </td>
-                  <td style={{ color:"var(--ink3)", fontSize:12 }}>{r.bench}</td>
-                  <td>
-                    <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 8px", borderRadius:3, fontSize:11, fontWeight:700,
-                      background: r.good ? "var(--emerald-l)" : "#fde8e8",
-                      color: r.good ? "var(--emerald)" : "var(--red)" }}>
-                      {r.good ? "✓ Good" : "✗ Review"}
-                    </span>
-                  </td>
-                  <td style={{ fontSize:12, color:"var(--ink3)" }}>
-                    {r.good ? "Within healthy range" : "Below target — consider optimising"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+  .sidebar-logo{
+    height:var(--topbar-h);display:flex;align-items:center;
+    padding:0 16px;gap:9px;
+    border-bottom:1px solid var(--sep);
+    cursor:pointer;flex-shrink:0;
+  }
+  .logo-mark{
+    width:26px;height:26px;border-radius:8px;flex-shrink:0;
+    background:linear-gradient(145deg,#0071e3 0%,#2563eb 50%,#4f46e5 100%);
+    display:flex;align-items:center;justify-content:center;
+    font-size:13px;font-weight:800;color:#fff;
+    box-shadow:0 2px 8px rgba(0,113,227,0.4),inset 0 1px 0 rgba(255,255,255,0.25);
+    letter-spacing:-0.5px;
+  }
+  .logo-text{font-size:16px;font-weight:700;letter-spacing:-0.4px;color:var(--text-primary);}
+  .logo-text span{color:var(--blue);}
+
+  .sidebar-section-label{
+    font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;
+    color:var(--text-quaternary);padding:16px 18px 6px;
+  }
+  .sidebar-nav{flex:1;overflow-y:auto;padding:6px 8px;scrollbar-width:none;}
+  .sidebar-nav::-webkit-scrollbar{display:none;}
+
+  .nav-item{
+    display:flex;align-items:center;gap:9px;
+    padding:7px 10px;border-radius:var(--r-sm);
+    cursor:pointer;transition:background var(--dur) var(--ease-out),color var(--dur) var(--ease-out);
+    font-size:13.5px;font-weight:500;
+    color:var(--text-tertiary);border:none;background:none;
+    font-family:inherit;width:100%;text-align:left;position:relative;
+  }
+  .nav-item:hover{background:var(--fill1);color:var(--text-primary);}
+  .nav-item.active{background:var(--blue-bg);color:var(--blue);font-weight:600;}
+  .nav-item.active::before{
+    content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);
+    width:3px;height:60%;background:var(--blue);border-radius:0 2px 2px 0;
+  }
+  .nav-icon{
+    width:26px;height:26px;border-radius:7px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:13px;flex-shrink:0;
+    background:var(--fill1);
+    transition:all var(--dur);
+  }
+  .nav-item.active .nav-icon{background:var(--blue-bg);}
+  .nav-item:hover .nav-icon{background:var(--fill2);}
+
+  .sidebar-bottom{
+    padding:10px 8px;border-top:1px solid var(--sep);flex-shrink:0;
+  }
+  .sidebar-result-pill{
+    background:var(--fill1);border-radius:var(--r);
+    padding:12px 14px;margin-bottom:8px;
+  }
+  .sidebar-result-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;}
+  .sidebar-result-row:last-child{margin-bottom:0;}
+  .sidebar-result-label{font-size:11px;font-weight:600;color:var(--text-quaternary);text-transform:uppercase;letter-spacing:0.4px;}
+  .sidebar-result-val{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;}
+
+  /* ── MAIN CONTENT AREA ── */
+  .main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;background:var(--bg);}
+
+  /* ── TOPBAR — GLASS CHROME ── */
+  .topbar{
+    height:var(--topbar-h);flex-shrink:0;
+    display:flex;align-items:center;gap:8px;
+    padding:0 18px;
+    background:var(--surface);
+    backdrop-filter:saturate(200%) blur(28px);
+    -webkit-backdrop-filter:saturate(200%) blur(28px);
+    border-bottom:1px solid var(--sep);
+    box-shadow:0 1px 0 var(--glass-stroke);
+    position:relative;z-index:10;
+  }
+
+  /* ── CONTENT SCROLL ── */
+  .content{
+    flex:1;overflow-y:auto;
+    padding:24px 24px 40px;
+    scrollbar-width:thin;
+    scrollbar-color:var(--fill3) transparent;
+  }
+  .content::-webkit-scrollbar{width:5px;}
+  .content::-webkit-scrollbar-track{background:transparent;}
+  .content::-webkit-scrollbar-thumb{background:var(--fill3);border-radius:99px;}
+
+  /* ── CARDS — LAYERED GLASS ── */
+  .card{
+    background:var(--surface-solid);
+    border:1px solid var(--sep);
+    border-radius:var(--r-xl);
+    overflow:hidden;
+    box-shadow:var(--elev2);
+    position:relative;
+  }
+  /* Top-edge highlight for depth */
+  .card::before{
+    content:'';position:absolute;top:0;left:0;right:0;height:1px;
+    background:linear-gradient(90deg,transparent,var(--glass-stroke) 30%,var(--glass-stroke) 70%,transparent);
+    pointer-events:none;z-index:1;
+  }
+  .card-glass{
+    background:var(--glass);
+    backdrop-filter:blur(20px);
+    -webkit-backdrop-filter:blur(20px);
+    border:1px solid var(--sep);
+    border-radius:var(--r-xl);
+    box-shadow:var(--glass-shadow);
+  }
+  .card-header{
+    padding:14px 18px 13px;
+    border-bottom:1px solid var(--sep);
+    display:flex;align-items:center;justify-content:space-between;
+    background:linear-gradient(180deg,var(--fill1) 0%,transparent 100%);
+  }
+  .card-body{padding:18px;}
+  .card-body-sm{padding:12px 16px;}
+
+  /* ── KPI CARDS ── */
+  .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;}
+  .kpi-card{
+    background:var(--surface-solid);
+    border:1px solid var(--sep);
+    border-radius:var(--r-lg);
+    padding:14px 16px 15px;
+    box-shadow:var(--elev1);
+    transition:transform var(--dur) var(--ease-out),box-shadow var(--dur) var(--ease-out);
+    position:relative;overflow:hidden;
+  }
+  .kpi-card::after{
+    content:'';position:absolute;bottom:0;left:0;right:0;height:2px;
+    background:var(--accent-bar,transparent);border-radius:0 0 var(--r-lg) var(--r-lg);
+  }
+  .kpi-card:hover{transform:translateY(-2px);box-shadow:var(--elev3);}
+  .kpi-card.kpi-green{--accent-bar:var(--green-vivid);}
+  .kpi-card.kpi-red{--accent-bar:var(--red-vivid);}
+  .kpi-card.kpi-blue{--accent-bar:var(--blue);}
+  .kpi-card.kpi-amber{--accent-bar:var(--amber-vivid);}
+
+  .kpi-label{font-size:10.5px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;color:var(--text-tertiary);margin-bottom:7px;}
+  .kpi-value{font-size:24px;font-weight:700;letter-spacing:-0.6px;color:var(--text-primary);font-variant-numeric:tabular-nums;line-height:1;}
+  .kpi-value.green{color:var(--green);}
+  .kpi-value.red{color:var(--red);}
+  .kpi-value.blue{color:var(--blue);}
+  .kpi-value.amber{color:var(--amber);}
+  .kpi-badge{
+    display:inline-flex;align-items:center;gap:3px;
+    margin-top:6px;font-size:10.5px;font-weight:600;
+    padding:2px 7px;border-radius:99px;
+  }
+  .badge-green{background:var(--green-bg);color:var(--green);}
+  .badge-red{background:var(--red-bg);color:var(--red);}
+  .badge-blue{background:var(--blue-bg);color:var(--blue);}
+  .badge-amber{background:var(--amber-bg);color:var(--amber);}
+
+  /* ── PILL SEGMENTED CONTROL — Apple native style ── */
+  .pill-tabs{
+    display:inline-flex;gap:2px;padding:3px;
+    background:var(--fill1);
+    border:1px solid var(--sep);
+    border-radius:var(--r-sm);
+    margin-bottom:18px;
+  }
+  .pill-tab{
+    padding:5px 14px;border-radius:calc(var(--r-sm) - 2px);
+    font-size:13px;font-weight:500;cursor:pointer;
+    border:none;background:none;font-family:inherit;
+    color:var(--text-tertiary);
+    transition:all var(--dur) var(--ease-out);
+    white-space:nowrap;
+  }
+  .pill-tab.active{
+    background:var(--surface-solid);color:var(--text-primary);
+    font-weight:600;
+    box-shadow:var(--elev1);
+  }
+
+  /* ── INPUTS — Apple form style ── */
+  .input-field{
+    width:100%;height:36px;padding:0 10px;
+    background:var(--fill1);
+    border:1px solid var(--sep);
+    border-radius:var(--r-sm);
+    font-family:inherit;font-size:13px;
+    color:var(--blue);font-weight:600;
+    outline:none;transition:all var(--dur) var(--ease-out);
+    -webkit-appearance:none;appearance:none;
+  }
+  .input-field:focus{
+    border-color:var(--blue);
+    background:var(--bg2);
+    box-shadow:0 0 0 3px var(--blue-ring);
+  }
+  .input-field::placeholder{color:var(--text-quaternary);font-weight:400;}
+  .input-field:disabled{opacity:0.4;cursor:not-allowed;}
+  .input-wrap{position:relative;display:flex;align-items:center;}
+  .input-prefix,.input-suffix{
+    position:absolute;font-size:11px;font-weight:700;
+    color:var(--text-quaternary);pointer-events:none;
+  }
+  .input-prefix{left:9px;}
+  .input-suffix{right:9px;}
+  .input-field.has-prefix{padding-left:20px;}
+  .input-field.has-suffix{padding-right:22px;}
+  .input-label{font-size:11.5px;font-weight:600;color:var(--text-secondary);margin-bottom:5px;display:block;letter-spacing:-0.1px;}
+  .input-group{display:flex;flex-direction:column;gap:0;}
+  .select-field{
+    width:100%;height:36px;padding:0 10px;
+    background:var(--fill1);border:1px solid var(--sep);
+    border-radius:var(--r-sm);
+    font-family:inherit;font-size:13px;color:var(--text-primary);
+    outline:none;cursor:pointer;
+    transition:border-color var(--dur);
+  }
+  .select-field:focus{border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-ring);}
+
+  /* ── TOGGLE SWITCH — Apple system style ── */
+  .toggle{
+    width:38px;height:22px;border-radius:11px;
+    background:var(--fill3);cursor:pointer;border:none;
+    position:relative;transition:background var(--dur) var(--ease-out);
+    flex-shrink:0;
+  }
+  .toggle.on{background:var(--green-vivid);}
+  .toggle::after{
+    content:'';position:absolute;
+    width:18px;height:18px;border-radius:50%;
+    background:#fff;top:2px;left:2px;
+    transition:transform var(--dur) var(--ease-spring);
+    box-shadow:0 1px 4px rgba(0,0,0,0.25);
+  }
+  .toggle.on::after{transform:translateX(16px);}
+
+  /* ── DATA TABLE ── */
+  .data-table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  .data-table th{
+    padding:8px 12px;text-align:right;
+    font-size:10.5px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;
+    color:var(--text-tertiary);background:var(--fill1);
+    border-bottom:1px solid var(--sep);
+  }
+  .data-table th:first-child{text-align:left;}
+  .data-table td{
+    padding:8px 12px;text-align:right;
+    border-bottom:1px solid var(--sep2);
+    color:var(--text-primary);font-variant-numeric:tabular-nums;
+  }
+  .data-table td:first-child{text-align:left;font-weight:500;color:var(--text-secondary);}
+  .data-table tr:last-child td{border-bottom:none;}
+  .data-table tr:hover td{background:var(--fill1);}
+  .data-table .total-row td{background:var(--green-bg);color:var(--green);font-weight:700;border-top:1px solid var(--green-vivid);}
+
+  /* ── PHASE PILLS ── */
+  .phase-c{display:inline-block;background:var(--amber-bg);color:var(--amber);font-size:9px;font-weight:700;padding:1px 6px;border-radius:99px;text-transform:uppercase;letter-spacing:0.4px;}
+  .phase-o{display:inline-block;background:var(--green-bg);color:var(--green);font-size:9px;font-weight:700;padding:1px 6px;border-radius:99px;text-transform:uppercase;letter-spacing:0.4px;}
+
+  /* ── BUTTON SYSTEM ── */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:5px;
+    padding:8px 16px;border-radius:var(--r-sm);
+    font-family:inherit;font-size:13px;font-weight:600;
+    cursor:pointer;border:none;
+    transition:all var(--dur) var(--ease-out);
+    white-space:nowrap;letter-spacing:-0.1px;
+  }
+  .btn-primary{
+    background:var(--blue);color:#fff;
+    box-shadow:0 1px 3px rgba(0,113,227,0.3);
+  }
+  .btn-primary:hover{filter:brightness(1.08);transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,113,227,0.35);}
+  .btn-primary:active{transform:translateY(0);filter:brightness(0.95);}
+  .btn-secondary{
+    background:var(--fill1);color:var(--text-primary);
+    border:1px solid var(--sep);
+  }
+  .btn-secondary:hover{background:var(--fill2);}
+  .btn-destructive{background:var(--red-bg);color:var(--red);border:1px solid rgba(217,48,37,0.2);}
+  .btn-destructive:hover{background:var(--red);color:#fff;}
+  .btn-ghost{background:none;color:var(--blue);padding:6px 10px;}
+  .btn-ghost:hover{background:var(--blue-bg);}
+  .btn-sm{padding:4px 10px;font-size:12px;border-radius:var(--r-xs);}
+  .btn:disabled{opacity:0.45;cursor:not-allowed;transform:none !important;filter:none !important;}
+  .btn.loading::after{content:'';width:13px;height:13px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 0.6s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  /* ── GRIDS ── */
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;}
+  .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+
+  /* ── SCENARIO BUTTONS ── */
+  .scenario-btn{
+    padding:6px 16px;border-radius:var(--r-sm);
+    font-size:13px;font-weight:500;cursor:pointer;
+    border:1px solid var(--sep);
+    background:var(--surface-solid);color:var(--text-secondary);
+    transition:all var(--dur);font-family:inherit;
+  }
+  .scenario-btn.active{background:var(--blue);color:#fff;border-color:var(--blue);box-shadow:0 2px 8px rgba(0,113,227,0.3);}
+  .scenario-btn:hover:not(.active){background:var(--fill2);}
+
+  /* ── INFO BANNERS ── */
+  .info-banner{
+    display:flex;gap:10px;align-items:flex-start;
+    padding:11px 14px;border-radius:var(--r);
+    margin-bottom:14px;font-size:13px;line-height:1.5;
+  }
+  .info-blue{background:var(--blue-bg);border:1px solid rgba(0,113,227,0.15);color:var(--blue);}
+  .info-green{background:var(--green-bg);border:1px solid rgba(29,131,72,0.15);color:var(--green);}
+  .info-amber{background:var(--amber-bg);border:1px solid rgba(180,83,9,0.15);color:var(--amber);}
+  .info-red{background:var(--red-bg);border:1px solid rgba(217,48,37,0.15);color:var(--red);}
+
+  /* ── MODAL ── */
+  .modal-overlay{
+    position:fixed;inset:0;
+    background:rgba(0,0,0,0.45);
+    backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);
+    z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;
+  }
+  .modal-box{
+    background:var(--surface-solid);
+    border-radius:var(--r-2xl);padding:26px;width:100%;max-width:440px;
+    box-shadow:var(--elev5);
+    border:1px solid var(--sep);
+    animation:modalIn 0.25s var(--ease-spring) both;
+  }
+  @keyframes modalIn{from{opacity:0;transform:scale(0.95) translateY(8px);}to{opacity:1;transform:scale(1) translateY(0);}}
+
+  /* ── AUTH PAGES ── */
+  .auth-page{min-height:100dvh;display:flex;background:var(--bg);}
+  .auth-left{
+    flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;
+    padding:60px;
+    background:linear-gradient(150deg,#000814 0%,#001233 40%,#0a1628 70%,#000d1a 100%);
+    position:relative;overflow:hidden;
+  }
+  .auth-left::before{
+    content:'';position:absolute;inset:0;
+    background:radial-gradient(ellipse at 25% 55%,rgba(0,113,227,0.18) 0%,transparent 65%),
+              radial-gradient(ellipse at 75% 30%,rgba(79,70,229,0.12) 0%,transparent 55%);
+  }
+  .auth-left::after{
+    content:'';position:absolute;inset:0;
+    background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Ccircle cx='30' cy='30' r='0.5' fill='rgba(255,255,255,0.08)'/%3E%3C/svg%3E");
+  }
+  .auth-right{
+    width:460px;flex-shrink:0;background:var(--bg2);
+    display:flex;flex-direction:column;justify-content:center;
+    padding:52px 44px;overflow-y:auto;
+    box-shadow:-20px 0 40px rgba(0,0,0,0.1);
+  }
+  .auth-input{
+    width:100%;height:42px;padding:0 13px;
+    background:var(--fill1);border:1px solid var(--sep);
+    border-radius:var(--r-sm);
+    font-family:inherit;font-size:14px;color:var(--text-primary);
+    outline:none;transition:all var(--dur) var(--ease-out);
+  }
+  .auth-input:focus{border-color:var(--blue);background:var(--bg2);box-shadow:0 0 0 3px var(--blue-ring);}
+  .auth-input.err{border-color:var(--red);box-shadow:0 0 0 3px var(--red-bg);}
+  .auth-label{font-size:12.5px;font-weight:600;color:var(--text-secondary);margin-bottom:5px;display:block;}
+  .auth-btn{
+    width:100%;height:44px;background:var(--blue);color:#fff;
+    border:none;border-radius:var(--r-sm);
+    font-family:inherit;font-size:14px;font-weight:600;
+    cursor:pointer;transition:all var(--dur) var(--ease-out);
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 2px 8px rgba(0,113,227,0.3);
+  }
+  .auth-btn:hover:not(:disabled){filter:brightness(1.08);box-shadow:0 4px 16px rgba(0,113,227,0.4);}
+  .auth-btn:disabled{opacity:0.55;cursor:not-allowed;}
+  .auth-err{background:var(--red-bg);border:1px solid rgba(217,48,37,0.2);border-radius:var(--r-sm);padding:10px 13px;font-size:13px;color:var(--red);margin-bottom:13px;}
+  .auth-ok{background:var(--green-bg);border:1px solid rgba(29,131,72,0.2);border-radius:var(--r-sm);padding:10px 13px;font-size:13px;color:var(--green);margin-bottom:13px;}
+  .auth-link{color:var(--blue);cursor:pointer;font-weight:600;}
+  .pw-wrap{position:relative;}
+  .pw-toggle{position:absolute;right:11px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text-tertiary);font-size:11.5px;font-family:inherit;font-weight:600;}
+
+  /* ── DASHBOARD ── */
+  .dash-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+  .project-card{
+    background:var(--surface-solid);
+    border:1px solid var(--sep);
+    border-radius:var(--r-xl);
+    padding:18px;cursor:pointer;
+    transition:transform var(--dur) var(--ease-out),box-shadow var(--dur) var(--ease-out),border-color var(--dur);
+    position:relative;overflow:hidden;
+  }
+  .project-card::before{
+    content:'';position:absolute;top:0;left:0;right:0;height:3px;
+    background:linear-gradient(90deg,var(--blue),var(--indigo));
+    opacity:0;transition:opacity var(--dur);
+  }
+  .project-card:hover{transform:translateY(-3px);box-shadow:var(--elev4);border-color:var(--blue-bg);}
+  .project-card:hover::before{opacity:1;}
+  .project-kpi-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:11px 0;}
+  .project-kpi{background:var(--fill1);border-radius:var(--r);padding:8px 10px;}
+
+  /* ── SECTION DIVIDER ── */
+  .section-label{
+    font-size:10.5px;font-weight:700;letter-spacing:0.6px;
+    text-transform:uppercase;color:var(--text-quaternary);
+    padding:0 8px;margin-bottom:5px;
+  }
+
+  /* ── PRINT ── */
+  @media print{
+    .sidebar,.topbar,.no-print{display:none!important;}
+    .app-shell{display:block;height:auto;}
+    .main{display:block;height:auto;}
+    .content{padding:0;overflow:visible;}
+    .card{box-shadow:none!important;break-inside:avoid;border:1px solid #ddd!important;}
+    @page{margin:15mm;size:A4;}
+    .print-header{display:block!important;}
+  }
+  .print-header{display:none;}
+
+  /* ── ANIMATIONS ── */
+  @keyframes fadeUp{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
+  @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+  @keyframes scaleIn{from{opacity:0;transform:scale(0.97);}to{opacity:1;transform:scale(1);}}
+  .fade-up{animation:fadeUp 0.32s var(--ease-out) both;}
+  .fade-up-1{animation-delay:0.05s;}
+  .fade-up-2{animation-delay:0.1s;}
+  .fade-up-3{animation-delay:0.15s;}
+  .fade-up-4{animation-delay:0.2s;}
+  .fade-in{animation:fadeIn 0.2s ease both;}
+  .scale-in{animation:scaleIn 0.25s var(--ease-out) both;}
+
+  /* ── RESPONSIVE ── */
+  @media(max-width:900px){
+    .sidebar{display:none;}
+    .auth-left{display:none;}
+    .auth-right{width:100%;padding:32px 22px;}
+    .dash-grid,.grid-3,.grid-4,.kpi-grid{grid-template-columns:1fr 1fr;}
+    .grid-2{grid-template-columns:1fr;}
+  }
+  @media(max-width:600px){
+    .dash-grid,.kpi-grid{grid-template-columns:1fr;}
+  }
+`}</style>
+);
+
+/* ══ CHART TOOLTIP ═════════════════════════════════════════════════════ */
+function ChartTip({active,payload,label}){
+  const{fmt}=useFmt();
+  if(!active||!payload?.length) return null;
+  return(
+    <div className="chart-tooltip" style={{background:"var(--surface-solid)",border:"1px solid var(--sep)",borderRadius:"var(--r-sm)",padding:"10px 14px",boxShadow:"var(--shadow)"}}>
+      <div style={{fontSize:11,color:"var(--text-tertiary)",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.3px",marginBottom:5}}>Year {label}</div>
+      {payload.map(p=>(
+        <div key={p.name} style={{display:"flex",justifyContent:"space-between",gap:16,fontSize:13}}>
+          <span style={{color:"var(--text-secondary)",display:"flex",alignItems:"center",gap:5}}>
+            <span style={{width:8,height:8,borderRadius:2,background:p.color,display:"inline-block"}}/>
+            {p.name}
+          </span>
+          <span style={{fontWeight:700,color:p.color,fontVariantNumeric:"tabular-nums"}}>{fmt(p.value)}</span>
         </div>
       ))}
     </div>
   );
 }
+/* ══ MAIN APP ══════════════════════════════════════════════════════════ */
+export default function App(){
+  const[screen,setScreen]=useState("landing");
+  const[currency,setCurrency]=useState("EUR");
+  const[session,setSession]=useState(null);
+  const[projects,setProjects]=useState([]);
+  const[loading,setLoading]=useState(false);
+  const[activeProj,setActiveProj]=useState(null);
+  const[showNew,setShowNew]=useState(false);
+  const[newName,setNewName]=useState("");
+  const cur=CURRENCIES.find(c=>c.code===currency)||CURRENCIES[1];
 
-/* ══════════════════════════════════════════════════════════════════════
-   DUPONT ANALYSIS TAB
-══════════════════════════════════════════════════════════════════════ */
-function DuPontTab({ inputs, totals, schedule }) {
-  const { fmtK } = useFmt();
-  const lastYr     = schedule[schedule.length - 1] || {};
-  const revenue    = (lastYr.balance || 0) * 0.18;
-  const netInc     = revenue * 0.09;
-  const totalAssets = lastYr.balance || 1;
-  const equity     = totalAssets * 0.55;
-  const debt       = totalAssets * 0.45;
-  const ebit       = revenue * 0.14;
-  const interest   = Number(inputs.principal) * 0.055;
-  const ebt        = ebit - interest;
-  const tax        = Math.max(0, ebt * (Number(inputs.tax) / 100));
+  useEffect(()=>{
+    const tk=getURLToken();
+    if(tk){
+      sb.auth.getUser(tk).then(u=>{
+        if(u?.id){
+          const sess={token:tk,user:{id:u.id,email:u.email,name:u.user_metadata?.full_name||u.email.split('@')[0]}};
+          setSession(sess);localStorage.setItem('ciq',JSON.stringify(sess));setScreen("dashboard");
+        }
+      });return;
+    }
+    const stored=localStorage.getItem('ciq');
+    if(stored){try{
+      const sess=JSON.parse(stored);
+      sb.auth.getUser(sess.token).then(u=>{
+        if(u?.id){setSession(sess);setScreen("dashboard");}
+        else localStorage.removeItem('ciq');
+      });
+    }catch{localStorage.removeItem('ciq');}}
+  },[]);
 
-  // 3-Factor DuPont: ROE = Net Profit Margin × Asset Turnover × Equity Multiplier
-  const npm   = revenue > 0 ? netInc / revenue : 0;
-  const at    = totalAssets > 0 ? revenue / totalAssets : 0;
-  const em    = equity > 0 ? totalAssets / equity : 0;
-  const roe3  = npm * at * em;
+  useEffect(()=>{
+    if(!session) return;
+    setLoading(true);
+    sb.db.list(session.token).then(data=>{
+      if(Array.isArray(data)) setProjects(data.map(p=>({
+        id:p.id,name:p.name,status:p.status,
+        npv:p.npv||0,irr:p.irr||0,
+        date:new Date(p.updated_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),
+        inputs:p.inputs||DEF,
+      })));
+      setLoading(false);
+    });
+  },[session]);
 
-  // 5-Factor DuPont: ROE = Tax Burden × Interest Burden × EBIT Margin × Asset Turnover × Equity Multiplier
-  const taxBurden  = ebt !== 0 ? (ebt - tax) / ebt : 0;
-  const intBurden  = ebit !== 0 ? ebt / ebit : 0;
-  const ebitMargin = revenue > 0 ? ebit / revenue : 0;
-  const roe5 = taxBurden * intBurden * ebitMargin * at * em;
+  const login=sess=>{setSession(sess);localStorage.setItem('ciq',JSON.stringify(sess));setScreen("dashboard");};
+  const logout=async()=>{if(session)await sb.auth.signOut(session.token);localStorage.removeItem('ciq');setSession(null);setProjects([]);setScreen("landing");};
+  const openProj=p=>{setActiveProj(p);setScreen("app");};
 
-  const box = (label, value, fmt, sub, color = "var(--ink)") => (
-    <div style={{ background:"var(--cream)", border:"1.5px solid var(--border)", borderRadius:10, padding:"14px 16px", textAlign:"center", minWidth:120 }}>
-      <div style={{ fontSize:10, color:"var(--ink3)", textTransform:"uppercase", letterSpacing:"0.6px", marginBottom:5, fontWeight:600 }}>{label}</div>
-      <div style={{ fontFamily:"var(--serif)", fontSize:22, color, fontWeight:700 }}>
-        {fmt === "pct" ? `${(value*100).toFixed(1)}%` : fmt === "x" ? `${value.toFixed(2)}×` : fmtK(value)}
+  const createProj=async()=>{
+    if(!newName.trim()||!session) return;
+    const d={user_id:session.user.id,name:newName.trim(),inputs:DEF,npv:0,irr:0,final_value:0,status:"draft"};
+    const created=await sb.db.create(session.token,d);
+    if(created?.id){
+      const p={id:created.id,name:created.name,status:"draft",npv:0,irr:0,date:"Just now",inputs:DEF};
+      setProjects(x=>[p,...x]);setNewName("");setShowNew(false);openProj(p);
+    }
+  };
+
+  const deleteProj=async id=>{
+    if(!session) return;
+    await sb.db.del(session.token,id);
+    setProjects(x=>x.filter(p=>p.id!==id));
+  };
+
+  const saveProj=async(id,inputs,results)=>{
+    if(!session) return;
+    const d={inputs,npv:results.npv,irr:results.irr?results.irr*100:0,final_value:results.totCapex||0,status:"active"};
+    await sb.db.update(session.token,id,d);
+    setProjects(x=>x.map(p=>p.id===id?{...p,...d,finalValue:d.final_value,date:"Just now"}:p));
+  };
+
+  return(
+    <CurCtx.Provider value={cur}>
+      <Styles/>
+      {screen==="landing"   && <LandingPage onLaunch={()=>setScreen("login")} onDash={session?()=>setScreen("dashboard"):null}/>}
+      {screen==="login"     && <LoginPage   onLogin={login} onSignup={()=>setScreen("signup")} onForgot={()=>setScreen("forgot")} onBack={()=>setScreen("landing")}/>}
+      {screen==="signup"    && <SignupPage  onLogin={login} onSignin={()=>setScreen("login")} onBack={()=>setScreen("landing")}/>}
+      {screen==="forgot"    && <ForgotPage  onBack={()=>setScreen("login")}/>}
+      {screen==="dashboard" && <Dashboard   session={session} projects={projects} loading={loading} onOpen={openProj} onDelete={deleteProj} onLogout={logout} onNew={()=>setShowNew(true)} currency={currency} setCurrency={setCurrency} onProfile={()=>setScreen("profile")} onHome={()=>setScreen("landing")}/>}
+      {screen==="app"       && <AppShell    project={activeProj} onBack={()=>setScreen("dashboard")} onSave={saveProj} session={session} onProfile={()=>setScreen("profile")} currency={currency} setCurrency={setCurrency}/>}
+      {screen==="profile"   && <ProfilePage session={session} onBack={()=>setScreen(activeProj?"app":"dashboard")} onLogout={logout}/>}
+      {showNew&&(
+        <div className="modal-overlay" onClick={()=>setShowNew(false)}>
+          <div className="modal-box" onClick={e=>e.stopPropagation()}>
+            <div className="t-title3" style={{marginBottom:4}}>New Project</div>
+            <div className="t-callout" style={{color:"var(--text-tertiary)",marginBottom:18}}>Give your investment analysis a name to get started.</div>
+            <div className="input-group" style={{marginBottom:16}}>
+              <label className="input-label">Project Name</label>
+              <input className="auth-input" placeholder="e.g. Hotel Construction 2025" value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&createProj()} autoFocus/>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn btn-secondary" onClick={()=>setShowNew(false)}>Cancel</button>
+              <button className="btn btn-primary" style={{flex:1}} onClick={createProj}>Create Project →</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </CurCtx.Provider>
+  );
+}
+
+/* ══ AUTH PAGES ════════════════════════════════════════════════════════ */
+function LoginPage({onLogin,onSignup,onForgot,onBack}){
+  const[email,setEmail]=useState(""); const[pw,setPw]=useState("");
+  const[show,setShow]=useState(false); const[loading,setLoading]=useState(false); const[err,setErr]=useState("");
+
+  const submit=async()=>{
+    setErr("");
+    if(!email||!pw){setErr("Please fill in all fields.");return;}
+    if(!email.includes("@")){setErr("Invalid email address.");return;}
+    if(pw.length<6){setErr("Password must be at least 6 characters.");return;}
+    setLoading(true);
+    const d=await sb.auth.signIn({email,password:pw});
+    setLoading(false);
+    if(d.error||!d.access_token){setErr(d.error?.message||d.msg||"Invalid email or password.");return;}
+    const u=await sb.auth.getUser(d.access_token);
+    onLogin({token:d.access_token,user:{id:u.id,email:u.email,name:u.user_metadata?.full_name||u.email.split('@')[0]}});
+  };
+
+  return(
+    <div className="auth-page">
+      <div className="auth-left">
+        <div style={{position:"relative",zIndex:1,maxWidth:380}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:40}}>
+            <div className="sidebar-logo" style={{background:"none",padding:0,border:"none",height:"auto"}}>
+              <div className="logo-mark">C</div>
+              <span style={{color:"#fff",fontSize:19}}>CapitalIQ</span>
+            </div>
+          </div>
+          <div style={{fontFamily:"Inter",fontSize:34,fontWeight:800,color:"#fff",lineHeight:1.15,marginBottom:14,letterSpacing:"-0.8px"}}>Professional investment analysis.</div>
+          <div style={{fontSize:15,color:"rgba(255,255,255,0.55)",lineHeight:1.65,marginBottom:36}}>DCF valuation, scenario planning, sensitivity analysis and board-ready proposals — for businesses that make serious investment decisions.</div>
+          {[["📊","Save unlimited projects","All analyses in one place"],["⚡","Real-time calculations","Instant results as you type"],["📄","PDF proposals","Board-ready in one click"],["🔒","Bank-grade security","Encrypted and private"]].map(([i,t,d])=>(
+            <div key={t} style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+              <div style={{width:36,height:36,borderRadius:10,background:"rgba(255,255,255,0.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{i}</div>
+              <div><div style={{fontSize:14,fontWeight:600,color:"#fff"}}>{t}</div><div style={{fontSize:12,color:"rgba(255,255,255,0.45)"}}>{d}</div></div>
+            </div>
+          ))}
+        </div>
       </div>
-      {sub && <div style={{ fontSize:10, color:"var(--ink3)", marginTop:3 }}>{sub}</div>}
+      <div className="auth-right">
+        <div style={{marginBottom:32}}>
+          <div style={{fontSize:13,color:"var(--text-tertiary)",marginBottom:8}}>Welcome back</div>
+          <div className="t-title2">Sign in to CapitalIQ</div>
+        </div>
+        {err&&<div className="auth-err">{err}</div>}
+        <div style={{marginBottom:14}}>
+          <label className="auth-label">Email address</label>
+          <input className={`auth-input${err&&!email?" err":""}`} type="email" placeholder="you@company.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()}/>
+        </div>
+        <div style={{marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+            <label className="auth-label" style={{margin:0}}>Password</label>
+            <span className="auth-link" style={{fontSize:13}} onClick={onForgot}>Forgot password?</span>
+          </div>
+          <div className="pw-wrap">
+            <input className="auth-input" type={show?"text":"password"} placeholder="••••••••" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} style={{paddingRight:50}}/>
+            <button className="pw-toggle" onClick={()=>setShow(s=>!s)}>{show?"Hide":"Show"}</button>
+          </div>
+        </div>
+        <div style={{height:16}}/>
+        <button className={`auth-btn${loading?" loading":""}`} onClick={submit} disabled={loading}>{loading?"":"Sign in →"}</button>
+        <div style={{textAlign:"center",marginTop:18,fontSize:14,color:"var(--text-tertiary)"}}>
+          No account? <span className="auth-link" onClick={onSignup}>Create one free →</span>
+        </div>
+        <div style={{textAlign:"center",marginTop:8,fontSize:13}}>
+          <span className="auth-link" style={{color:"var(--text-tertiary)",fontWeight:400}} onClick={onBack}>← Back to home</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SignupPage({onLogin,onSignin,onBack}){
+  const[name,setName]=useState(""); const[email,setEmail]=useState(""); const[pw,setPw]=useState("");
+  const[confirm,setConfirm]=useState(""); const[show,setShow]=useState(false);
+  const[loading,setLoading]=useState(false); const[err,setErr]=useState(""); const[done,setDone]=useState(false);
+  const str=!pw.length?0:pw.length<6?1:pw.length<10?2:/[A-Z]/.test(pw)&&/[0-9]/.test(pw)?4:3;
+  const strC=["","var(--red)","var(--amber)","var(--blue)","var(--green)"];
+  const strL=["","Weak","Fair","Good","Strong"];
+
+  const submit=async()=>{
+    setErr("");
+    if(!name.trim()){setErr("Please enter your name.");return;}
+    if(!email.includes("@")){setErr("Invalid email.");return;}
+    if(pw.length<6){setErr("Password must be at least 6 characters.");return;}
+    if(pw!==confirm){setErr("Passwords do not match.");return;}
+    setLoading(true);
+    const d=await sb.auth.signUp({email,password:pw,name:name.trim()});
+    setLoading(false);
+    if(d.error){setErr(d.error.message||"Sign up failed.");return;}
+    if(d.access_token){const u=await sb.auth.getUser(d.access_token);onLogin({token:d.access_token,user:{id:u.id,email:u.email,name:name.trim()}});}
+    else setDone(true);
+  };
+
+  if(done) return(
+    <div className="auth-page" style={{justifyContent:"center",alignItems:"center"}}>
+      <div style={{maxWidth:400,textAlign:"center",padding:40}}>
+        <div style={{fontSize:48,marginBottom:16}}>✉️</div>
+        <div className="t-title2" style={{marginBottom:10}}>Check your email</div>
+        <div className="t-body" style={{color:"var(--text-secondary)",marginBottom:24}}>We sent a confirmation link to <strong>{email}</strong>. Click it to activate your account.</div>
+        <button className="btn btn-primary" onClick={onSignin}>Back to sign in →</button>
+      </div>
     </div>
   );
 
-  const op = (symbol) => (
-    <div style={{ fontSize:22, color:"var(--ink3)", display:"flex", alignItems:"center", padding:"0 8px" }}>{symbol}</div>
+  return(
+    <div className="auth-page">
+      <div className="auth-left">
+        <div style={{position:"relative",zIndex:1,maxWidth:380}}>
+          <div className="sidebar-logo" style={{background:"none",padding:0,border:"none",height:"auto",marginBottom:36}}><div className="logo-mark">C</div><span style={{color:"#fff",fontSize:19}}>CapitalIQ</span></div>
+          <div style={{fontFamily:"Inter",fontSize:32,fontWeight:800,color:"#fff",lineHeight:1.15,marginBottom:14,letterSpacing:"-0.6px"}}>Start making smarter decisions.</div>
+          <div style={{fontSize:15,color:"rgba(255,255,255,0.5)",lineHeight:1.65}}>Join businesses using CapitalIQ for professional investment appraisal with real DCF models and proper financial analysis.</div>
+        </div>
+      </div>
+      <div className="auth-right">
+        <div style={{marginBottom:28}}>
+          <div style={{fontSize:13,color:"var(--text-tertiary)",marginBottom:8}}>Get started for free</div>
+          <div className="t-title2">Create your account</div>
+        </div>
+        {err&&<div className="auth-err">{err}</div>}
+        <div style={{marginBottom:12}}><label className="auth-label">Full name</label><input className="auth-input" type="text" placeholder="Your Name" value={name} onChange={e=>setName(e.target.value)}/></div>
+        <div style={{marginBottom:12}}><label className="auth-label">Email</label><input className="auth-input" type="email" placeholder="you@company.com" value={email} onChange={e=>setEmail(e.target.value)}/></div>
+        <div style={{marginBottom:12}}>
+          <label className="auth-label">Password</label>
+          <div className="pw-wrap"><input className="auth-input" type={show?"text":"password"} placeholder="Min. 6 characters" value={pw} onChange={e=>setPw(e.target.value)} style={{paddingRight:50}}/><button className="pw-toggle" onClick={()=>setShow(s=>!s)}>{show?"Hide":"Show"}</button></div>
+          {pw.length>0&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
+            <div style={{flex:1,height:3,borderRadius:99,background:"var(--fill3)",overflow:"hidden"}}><div style={{width:`${(str/4)*100}%`,height:"100%",background:strC[str],transition:"all 0.3s"}}/></div>
+            <span style={{fontSize:11,color:strC[str],fontWeight:600}}>{strL[str]}</span>
+          </div>}
+        </div>
+        <div style={{marginBottom:20}}>
+          <label className="auth-label">Confirm password</label>
+          <input className={`auth-input${confirm&&confirm!==pw?" err":""}`} type={show?"text":"password"} placeholder="Repeat password" value={confirm} onChange={e=>setConfirm(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()}/>
+          {confirm&&confirm!==pw&&<div style={{fontSize:11,color:"var(--red)",marginTop:3}}>Passwords don't match</div>}
+        </div>
+        <button className={`auth-btn${loading?" loading":""}`} onClick={submit} disabled={loading}>{loading?"":"Create free account →"}</button>
+        <div style={{textAlign:"center",marginTop:16,fontSize:13,color:"var(--text-tertiary)"}}>Already have an account? <span className="auth-link" onClick={onSignin}>Sign in →</span></div>
+      </div>
+    </div>
   );
+}
 
-  return (
-    <div>
-      <div style={{ marginBottom:20 }}>
-        <div style={{ fontFamily:"var(--serif)", fontSize:24, color:"var(--ink)", marginBottom:4 }}>DuPont Analysis</div>
-        <div style={{ fontSize:13, color:"var(--ink3)" }}>Decompose Return on Equity into its underlying drivers</div>
+function ForgotPage({onBack}){
+  const[email,setEmail]=useState(""); const[loading,setLoading]=useState(false);
+  const[sent,setSent]=useState(false); const[err,setErr]=useState("");
+  const submit=async()=>{if(!email.includes("@")){setErr("Enter a valid email.");return;}setLoading(true);await sb.auth.resetPw(email);setLoading(false);setSent(true);};
+  return(
+    <div className="auth-page">
+      <div className="auth-left"><div style={{position:"relative",zIndex:1,maxWidth:380}}>
+        <div className="sidebar-logo" style={{background:"none",padding:0,border:"none",height:"auto",marginBottom:36}}><div className="logo-mark">C</div><span style={{color:"#fff",fontSize:19}}>CapitalIQ</span></div>
+        <div style={{fontFamily:"Inter",fontSize:32,fontWeight:800,color:"#fff",lineHeight:1.15,marginBottom:14,letterSpacing:"-0.6px"}}>Reset your password.</div>
+        <div style={{fontSize:15,color:"rgba(255,255,255,0.5)",lineHeight:1.65}}>Enter your email and we'll send a secure reset link in seconds.</div>
+      </div></div>
+      <div className="auth-right">
+        <div style={{marginBottom:28}}><div className="t-title2">Reset password</div></div>
+        {sent?(<>
+          <div className="auth-ok">✓ Reset link sent. Check your inbox and spam folder.</div>
+          <button className="btn btn-primary" style={{width:"100%"}} onClick={onBack}>Back to sign in →</button>
+        </>):(<>
+          {err&&<div className="auth-err">{err}</div>}
+          <div style={{marginBottom:16}}><label className="auth-label">Email address</label><input className="auth-input" type="email" placeholder="you@company.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} autoFocus/></div>
+          <button className={`auth-btn${loading?" loading":""}`} onClick={submit} disabled={loading}>{loading?"":"Send reset link →"}</button>
+          <div style={{textAlign:"center",marginTop:16}}><span className="auth-link" style={{color:"var(--text-tertiary)",fontWeight:400,fontSize:13}} onClick={onBack}>← Back to sign in</span></div>
+        </>)}
+      </div>
+    </div>
+  );
+}
+
+/* ══ DASHBOARD ═════════════════════════════════════════════════════════ */
+function Dashboard({session,projects,loading,onOpen,onDelete,onLogout,onNew,currency,setCurrency,onProfile,onHome}){
+  const{fmt}=useFmt();
+  const u=session?.user||{};
+  const init=(u.name||"U").split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
+  const totNPV=projects.reduce((s,p)=>s+(p.npv||0),0);
+  const profitable=projects.filter(p=>p.npv>0).length;
+  const avgIRR=projects.length?projects.reduce((s,p)=>s+(p.irr||0),0)/projects.length:0;
+
+  return(
+    <div style={{minHeight:"100dvh",background:"var(--bg)",fontFamily:"Inter,sans-serif"}}>
+      {/* Topbar */}
+      <div style={{background:"var(--surface)",backdropFilter:"saturate(180%) blur(24px)",WebkitBackdropFilter:"saturate(180%) blur(24px)",borderBottom:"1px solid var(--sep)",height:52,display:"flex",alignItems:"center",padding:"0 24px",gap:12,position:"sticky",top:0,zIndex:50}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}} onClick={onHome}>
+          <div className="logo-mark">C</div>
+          <span style={{fontWeight:700,fontSize:16,color:"var(--text-primary)",letterSpacing:"-0.2px"}}>CapitalIQ</span>
+        </div>
+        <button onClick={onHome} style={{fontSize:12,color:"var(--text-tertiary)",background:"none",border:"1px solid var(--sep)",borderRadius:6,padding:"3px 9px",cursor:"pointer",fontFamily:"inherit"}}>Home</button>
+        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}>
+          <select value={currency} onChange={e=>setCurrency(e.target.value)}
+            style={{background:"var(--fill)",border:"1px solid var(--sep)",borderRadius:7,padding:"4px 8px",fontSize:12,fontWeight:600,color:"var(--blue)",fontFamily:"inherit",cursor:"pointer",outline:"none"}}>
+            {CURRENCIES.map(c=><option key={c.code} value={c.code}>{c.sym} {c.code}</option>)}
+          </select>
+          <button onClick={onProfile} style={{display:"flex",alignItems:"center",gap:8,background:"var(--fill)",border:"1px solid var(--sep)",borderRadius:10,padding:"5px 12px 5px 5px",cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}} onMouseEnter={e=>e.currentTarget.style.borderColor="var(--blue)"} onMouseLeave={e=>e.currentTarget.style.borderColor="var(--sep)"}>
+            <div style={{width:28,height:28,borderRadius:"50%",background:"var(--blue)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff"}}>{init}</div>
+            <div style={{textAlign:"left"}}><div style={{fontSize:12,fontWeight:600,color:"var(--text-primary)"}}>{u.name||"Account"}</div><div style={{fontSize:10,color:"var(--text-tertiary)"}}>View profile</div></div>
+          </button>
+          <button className="btn btn-sm" style={{background:"var(--red-bg)",color:"var(--red)",border:"none"}} onClick={onLogout}>Sign out</button>
+        </div>
       </div>
 
-      {/* 3-Factor */}
-      <div className="acard fade-up" style={{ marginBottom:16 }}>
-        <div className="acard-header">
-          <span className="acard-title">3-Factor DuPont Model</span>
-          <span className="acard-sub">ROE = Net Profit Margin × Asset Turnover × Equity Multiplier</span>
-        </div>
-        <div className="acard-body">
-          <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:4, marginBottom:20 }}>
-            {box("Net Profit Margin", npm, "pct", "Profitability", "var(--emerald)")}
-            {op("×")}
-            {box("Asset Turnover", at, "x", "Efficiency", "#1565c0")}
-            {op("×")}
-            {box("Equity Multiplier", em, "x", "Leverage", "#7b1fa2")}
-            {op("=")}
-            {box("ROE", roe3, "pct", "Return on Equity", "var(--gold)")}
+      <div style={{maxWidth:1120,margin:"0 auto",padding:"32px 24px"}}>
+        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:24}}>
+          <div>
+            <div className="t-title1" style={{marginBottom:4}}>Good day, {u.name?.split(" ")[0]||"there"} 👋</div>
+            <div style={{color:"var(--text-tertiary)",fontSize:14}}>{loading?"Loading...":`${projects.length} investment ${projects.length===1?"project":"projects"}`}</div>
           </div>
-          <table className="data-table">
-            <thead><tr><th style={{textAlign:"left"}}>Factor</th><th>Value</th><th>Formula</th><th>Driver</th><th>Insight</th></tr></thead>
-            <tbody>
-              {[
-                { factor:"Net Profit Margin", value:`${(npm*100).toFixed(1)}%`, formula:"Net Income ÷ Revenue", driver:"Profitability", insight: npm > 0.10 ? "Strong margin — good cost control" : "Margin below 10% — review pricing or costs" },
-                { factor:"Asset Turnover",    value:`${at.toFixed(2)}×`,        formula:"Revenue ÷ Total Assets", driver:"Efficiency", insight: at > 0.5 ? "Efficient use of assets" : "Low asset utilisation — consider optimising asset base" },
-                { factor:"Equity Multiplier", value:`${em.toFixed(2)}×`,        formula:"Total Assets ÷ Equity", driver:"Leverage",  insight: em < 3 ? "Conservative leverage" : "High leverage — monitor debt levels" },
-                { factor:"ROE (3-Factor)",    value:`${(roe3*100).toFixed(1)}%`, formula:"NPM × AT × EM",         driver:"Combined",  insight: roe3 > 0.15 ? "Strong ROE — value being created" : "ROE below 15% target" },
-              ].map(r => (
-                <tr key={r.factor}>
-                  <td style={{textAlign:"left", fontWeight:500}}>{r.factor}</td>
-                  <td style={{fontWeight:700, color:"var(--emerald)"}}>{r.value}</td>
-                  <td style={{color:"var(--ink3)", fontSize:12}}>{r.formula}</td>
-                  <td><span style={{fontSize:11, padding:"2px 7px", borderRadius:3, background:"var(--cream2)", color:"var(--ink2)", fontWeight:600}}>{r.driver}</span></td>
-                  <td style={{fontSize:12, color:"var(--ink2)"}}>{r.insight}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <button className="btn btn-primary" onClick={onNew}>+ New Project</button>
         </div>
-      </div>
 
-      {/* 5-Factor */}
-      <div className="acard fade-up fade-up-1" style={{ marginBottom:16 }}>
-        <div className="acard-header">
-          <span className="acard-title">5-Factor DuPont Model</span>
-          <span className="acard-sub">ROE = Tax Burden × Interest Burden × EBIT Margin × Asset Turnover × Equity Multiplier</span>
-        </div>
-        <div className="acard-body">
-          <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:4, marginBottom:20 }}>
-            {box("Tax Burden", taxBurden, "x", "(1 - tax rate)", "#c8960c")}
-            {op("×")}
-            {box("Interest Burden", intBurden, "x", "EBT ÷ EBIT", "#e65100")}
-            {op("×")}
-            {box("EBIT Margin", ebitMargin, "pct", "Operating margin", "#0d7a55")}
-            {op("×")}
-            {box("Asset Turnover", at, "x", "Efficiency", "#1565c0")}
-            {op("×")}
-            {box("Equity Multiplier", em, "x", "Leverage", "#7b1fa2")}
-            {op("=")}
-            {box("ROE", roe5, "pct", "5-Factor ROE", "var(--gold)")}
+        {projects.length>0&&(
+          <div className="kpi-grid" style={{marginBottom:28}}>
+            {[
+              {l:"Total Projects",v:String(projects.length),c:""},
+              {l:"Portfolio NPV",v:fmt(totNPV),c:totNPV>=0?"green":"red"},
+              {l:"Profitable",v:`${profitable}/${projects.length}`,c:profitable>0?"green":""},
+              {l:"Avg IRR",v:pct(avgIRR),c:""},
+            ].map(k=>(
+              <div className="kpi-card" key={k.l}>
+                <div className="kpi-label">{k.l}</div>
+                <div className={`kpi-value t-num ${k.c==="amber"?"amber":k.c}`}>{k.v}</div>
+              </div>
+            ))}
           </div>
-          <table className="data-table">
-            <thead><tr><th style={{textAlign:"left"}}>Factor</th><th>Value</th><th>Formula</th><th>What it measures</th></tr></thead>
-            <tbody>
-              {[
-                { factor:"Tax Burden",       value:`${(taxBurden*100).toFixed(1)}%`, formula:"Net Income ÷ EBT",   what:"How much profit survives after tax" },
-                { factor:"Interest Burden",  value:`${(intBurden*100).toFixed(1)}%`, formula:"EBT ÷ EBIT",         what:"How much operating profit survives interest" },
-                { factor:"EBIT Margin",      value:`${(ebitMargin*100).toFixed(1)}%`,formula:"EBIT ÷ Revenue",      what:"Core operating profitability" },
-                { factor:"Asset Turnover",   value:`${at.toFixed(2)}×`,              formula:"Revenue ÷ Assets",    what:"Revenue generated per unit of asset" },
-                { factor:"Equity Multiplier",value:`${em.toFixed(2)}×`,              formula:"Assets ÷ Equity",     what:"Degree of financial leverage" },
-                { factor:"ROE (5-Factor)",   value:`${(roe5*100).toFixed(1)}%`,      formula:"All 5 multiplied",    what:"Total return attributable to each factor" },
-              ].map(r => (
-                <tr key={r.factor}>
-                  <td style={{textAlign:"left",fontWeight:500}}>{r.factor}</td>
-                  <td style={{fontWeight:700, color:"var(--emerald)"}}>{r.value}</td>
-                  <td style={{color:"var(--ink3)",fontSize:12}}>{r.formula}</td>
-                  <td style={{fontSize:12,color:"var(--ink2)"}}>{r.what}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+        )}
 
-      {/* ROE Waterfall */}
-      <div className="acard fade-up fade-up-2">
-        <div className="acard-header"><span className="acard-title">ROE Driver Waterfall</span></div>
-        <div className="acard-body">
-          <div style={{ fontSize:12, color:"var(--ink3)", marginBottom:12 }}>Each bar shows the contribution of each factor to total ROE</div>
-          {[
-            { label:"Tax Burden",        contribution: taxBurden,                color:"#c8960c" },
-            { label:"× Interest Burden", contribution: taxBurden * intBurden,   color:"#e65100" },
-            { label:"× EBIT Margin",     contribution: taxBurden * intBurden * ebitMargin, color:"#0d7a55" },
-            { label:"× Asset Turnover",  contribution: taxBurden * intBurden * ebitMargin * at, color:"#1565c0" },
-            { label:"× Equity Mult.",    contribution: roe5,                    color:"#7b1fa2" },
-          ].map((f, i, arr) => {
-            const maxVal = Math.max(...arr.map(x => Math.abs(x.contribution)));
-            const w = maxVal > 0 ? (Math.abs(f.contribution) / maxVal) * 100 : 0;
-            return (
-              <div key={f.label} style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-                <div style={{ width:140, fontSize:11, color:"var(--ink2)", textAlign:"right", fontWeight:500 }}>{f.label}</div>
-                <div style={{ flex:1, height:22, background:"var(--cream)", borderRadius:4, overflow:"hidden" }}>
-                  <div style={{ width:`${w}%`, height:"100%", background:f.color, borderRadius:4, transition:"width 0.6s ease", display:"flex", alignItems:"center", justifyContent:"flex-end", paddingRight:6 }}>
-                    {w > 20 && <span style={{ fontSize:10, color:"#fff", fontWeight:700 }}>{(f.contribution*100).toFixed(1)}%</span>}
+        {!loading&&projects.length===0&&(
+          <div style={{textAlign:"center",padding:"72px 24px",background:"var(--surface-solid)",borderRadius:"var(--r-xl)",border:"1.5px dashed var(--sep)",marginBottom:20}}>
+            <div style={{width:64,height:64,borderRadius:18,background:"var(--blue-bg)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 18px"}}>📊</div>
+            <div className="t-title3" style={{marginBottom:8}}>Welcome to CapitalIQ</div>
+            <div style={{fontSize:14,color:"var(--text-secondary)",maxWidth:440,margin:"0 auto 24px",lineHeight:1.6}}>Create your first investment project to get professional DCF analysis, scenario planning, sensitivity analysis and a board-ready proposal.</div>
+            <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginBottom:24}}>
+              {[["🏗","Construction phases"],["📈","Revenue drivers"],["🎯","Break-even finder"],["📄","Auto proposals"]].map(([i,t])=>(
+                <div key={t} style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",background:"var(--fill)",borderRadius:8,fontSize:12,color:"var(--text-secondary)"}}><span>{i}</span>{t}</div>
+              ))}
+            </div>
+            <button className="btn btn-primary" onClick={onNew}>+ Create your first project</button>
+          </div>
+        )}
+
+        {loading&&<div style={{textAlign:"center",padding:"48px",color:"var(--text-tertiary)"}}>Loading your projects...</div>}
+
+        {projects.length>0&&(
+          <>
+            <div className="t-caption" style={{marginBottom:12}}>Projects</div>
+            <div className="dash-grid">
+              {projects.map(p=>(
+                <div className="project-card" key={p.id} onClick={()=>onOpen(p)}>
+                  <div className="t-headline" style={{marginBottom:2}}>{p.name}</div>
+                  <div className="t-footnote" style={{marginBottom:12}}>Last edited {p.date}</div>
+                  <div className="project-kpi-grid">
+                    <div className="project-kpi">
+                      <div style={{fontSize:15,fontWeight:700,color:p.npv>=0?"var(--green)":"var(--red)",fontVariantNumeric:"tabular-nums"}}>{fmt(p.npv)}</div>
+                      <div style={{fontSize:10,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.3px",marginTop:1}}>NPV</div>
+                    </div>
+                    <div className="project-kpi">
+                      <div style={{fontSize:15,fontWeight:700,color:"var(--blue)",fontVariantNumeric:"tabular-nums"}}>{pct(p.irr)}</div>
+                      <div style={{fontSize:10,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.3px",marginTop:1}}>IRR</div>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:p.status==="active"?"var(--green-bg)":"var(--fill2)",color:p.status==="active"?"var(--green)":"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.3px"}}>{p.status}</span>
+                    <div style={{display:"flex",gap:5}} onClick={e=>e.stopPropagation()}>
+                      <button className="btn btn-sm btn-secondary" onClick={()=>onOpen(p)}>Open</button>
+                      <button className="btn btn-sm btn-destructive" onClick={()=>onDelete(p.id)}>Delete</button>
+                    </div>
                   </div>
                 </div>
-                <div style={{ width:50, fontSize:11, fontWeight:700, color:f.color }}>{(f.contribution*100).toFixed(1)}%</div>
+              ))}
+              <div style={{background:"var(--fill)",border:"1.5px dashed var(--sep)",borderRadius:"var(--r-xl)",padding:20,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:"pointer",minHeight:180,gap:8,transition:"all 0.15s"}} onClick={onNew} onMouseEnter={e=>{e.currentTarget.style.borderColor="var(--blue)";e.currentTarget.style.background="var(--blue-bg)";}} onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--sep)";e.currentTarget.style.background="var(--fill)";}}>
+                <div style={{fontSize:24,color:"var(--text-tertiary)"}}>＋</div>
+                <div style={{fontSize:13,fontWeight:600,color:"var(--text-tertiary)"}}>New Project</div>
               </div>
-            );
-          })}
-        </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-/* ══════════════════════════════════════════════════════════════════════
-   INVESTMENT PROPOSAL TAB
-══════════════════════════════════════════════════════════════════════ */
-function ProposalTab({ inputs, totals, schedule, projectName }) {
-  const { fmtK, symbol, code } = useFmt();
-  const today = new Date().toLocaleDateString("en-US", { year:"numeric", month:"long", day:"numeric" });
-  const good  = totals.npv > 0;
-  const lastYr = schedule[schedule.length - 1] || {};
+/* ══ PROFILE PAGE ══════════════════════════════════════════════════════ */
+function ProfilePage({session,onBack,onLogout}){
+  const u=session?.user||{};
+  const init=(u.name||"U").split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
+  const[newPw,setNewPw]=useState(""); const[conf,setConf]=useState("");
+  const[show,setShow]=useState(false); const[loading,setLoading]=useState(false);
+  const[ok,setOk]=useState(false); const[err,setErr]=useState("");
 
-  const sections = [
-    {
-      title: "Executive Summary",
-      content: `This investment proposal analyses the financial viability of "${projectName}". Based on a ${inputs.years}-year projection with an initial investment of ${fmtK(Number(inputs.principal))} and monthly contributions of ${fmtK(Number(inputs.monthly))}, the analysis indicates that the project is ${good ? "financially viable and recommended for approval" : "currently below the required return threshold and requires revision"}.
-      
-The project generates a Net Present Value (NPV) of ${fmtK(totals.npv)} at a discount rate (WACC) of ${inputs.wacc}%, delivering an Internal Rate of Return (IRR) of ${totals.irr ? `${(totals.irr*100).toFixed(1)}%` : "N/A"}${totals.irr && totals.irr > inputs.wacc/100 ? `, which exceeds the cost of capital by ${((totals.irr - inputs.wacc/100)*100).toFixed(1)} percentage points` : ""}. The final projected portfolio value is ${fmtK(totals.finalBalance)}.`,
-    },
-    {
-      title: "Investment Overview",
-      content: null,
-      table: [
-        { label: "Project Name",            value: projectName },
-        { label: "Analysis Date",           value: today },
-        { label: "Currency",                value: code },
-        { label: "Initial Investment",      value: fmtK(Number(inputs.principal)) },
-        { label: "Monthly Contribution",    value: fmtK(Number(inputs.monthly)) },
-        { label: "Annual Return Rate",      value: `${inputs.rate}%` },
-        { label: "Projection Period",       value: `${inputs.years} years` },
-        { label: "Compounding",             value: inputs.compound.charAt(0).toUpperCase() + inputs.compound.slice(1) },
-        { label: "Discount Rate (WACC)",    value: `${inputs.wacc}%` },
-        { label: "Corporate Tax Rate",      value: `${inputs.tax}%` },
-        { label: "Inflation Assumption",    value: `${inputs.inflation}%` },
-      ],
-    },
-    {
-      title: "Financial Results",
-      content: null,
-      table: [
-        { label: "Final Portfolio Value",   value: fmtK(totals.finalBalance),   highlight: true },
-        { label: "Total Capital Invested",  value: fmtK(totals.totalContrib) },
-        { label: "Total Interest Earned",   value: fmtK(totals.totalInterest) },
-        { label: "Inflation-Adjusted Value",value: fmtK(totals.inflationAdj) },
-        { label: "Net Present Value (NPV)", value: fmtK(totals.npv),            highlight: true },
-        { label: "IRR",                     value: totals.irr ? `${(totals.irr*100).toFixed(2)}%` : "N/A", highlight: true },
-        { label: "Return on Investment",    value: `${totals.roi.toFixed(1)}%` },
-        { label: "Payback Period",          value: totals.payback >= 0 ? `${totals.payback+1} years` : ">10 years" },
-        { label: "Profitability Index",     value: Number(inputs.principal) > 0 ? ((totals.npv + Number(inputs.principal)) / Number(inputs.principal)).toFixed(2) + "×" : "N/A" },
-      ],
-    },
-    {
-      title: "Risk Assessment",
-      content: `The following risk factors have been identified for this investment:
+  const changePw=async()=>{
+    setErr("");setOk(false);
+    if(newPw.length<6){setErr("Password must be at least 6 characters.");return;}
+    if(newPw!==conf){setErr("Passwords do not match.");return;}
+    setLoading(true);
+    const d=await sb.auth.updatePw(session.token,newPw);
+    setLoading(false);
+    if(d.error) setErr(d.error.message||"Update failed.");
+    else{setOk(true);setNewPw("");setConf("");}
+  };
 
-• Interest Rate Risk: A 1% increase in WACC would reduce NPV by approximately ${fmtK(Math.abs((totals.npv * 0.08)))}.
-• Market Risk: The assumed annual return of ${inputs.rate}% is subject to market volatility. A Bear scenario (${Number(inputs.rate)-3}% return) would significantly alter outcomes.
-• Inflation Risk: At ${inputs.inflation}% annual inflation, the inflation-adjusted value is ${fmtK(totals.inflationAdj)}, representing a real-terms reduction of ${fmtK(totals.finalBalance - totals.inflationAdj)}.
-• Liquidity Risk: Monthly contributions of ${fmtK(Number(inputs.monthly))} represent an ongoing cash commitment over ${inputs.years} years.`,
-    },
-    {
-      title: "Recommendation",
-      content: good
-        ? `Based on the analysis, this investment is RECOMMENDED FOR APPROVAL. The project demonstrates a positive NPV of ${fmtK(totals.npv)}, indicating value creation above the cost of capital. The IRR of ${totals.irr ? `${(totals.irr*100).toFixed(1)}%` : "N/A"} provides a ${totals.irr && totals.irr > inputs.wacc/100 ? Math.abs(((totals.irr - inputs.wacc/100)*100)).toFixed(1) + "% buffer" : "margin"} above the required return.
-
-Decision: ✅ PROCEED WITH INVESTMENT`
-        : `Based on the analysis, this investment REQUIRES REVISION before approval. The project's current NPV of ${fmtK(totals.npv)} indicates it does not meet the minimum return threshold at the current WACC of ${inputs.wacc}%.
-
-Recommended actions: (1) Review cost structure to improve margins; (2) Negotiate better financing terms to reduce WACC; (3) Explore revenue enhancement opportunities; (4) Consider extending the investment horizon.
-
-Decision: ⚠️ REVISE AND RESUBMIT`,
-    },
-  ];
-
-  return (
-    <div>
-      {/* Report header */}
-      <div className="acard fade-up" style={{ marginBottom:16 }}>
-        <div style={{ background:"var(--ink)", padding:"28px 28px 24px", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-          <div>
-            <div style={{ fontFamily:"var(--serif)", fontSize:11, color:"#7dd3b0", letterSpacing:"1.5px", textTransform:"uppercase", marginBottom:8 }}>Investment Proposal</div>
-            <div style={{ fontFamily:"var(--serif)", fontSize:26, color:"#fff", marginBottom:4 }}>{projectName}</div>
-            <div style={{ fontSize:12, color:"#9ca3b8" }}>Prepared by CapitalIQ · {today}</div>
-          </div>
-          <div style={{ textAlign:"right" }}>
-            <div style={{ display:"inline-flex", alignItems:"center", gap:8, background: good ? "rgba(13,122,85,0.2)" : "rgba(192,57,43,0.2)", padding:"8px 16px", borderRadius:6, border: `1px solid ${good ? "#0d7a55" : "#c0392b"}` }}>
-              <span style={{ fontSize:18 }}>{good ? "✅" : "⚠️"}</span>
-              <div>
-                <div style={{ fontSize:13, fontWeight:700, color: good ? "#7dd3b0" : "#f87171" }}>{good ? "RECOMMENDED" : "NEEDS REVISION"}</div>
-                <div style={{ fontSize:10, color:"#9ca3b8" }}>NPV: {fmtK(totals.npv)}</div>
-              </div>
+  return(
+    <div style={{minHeight:"100dvh",background:"var(--bg)"}}>
+      <div style={{background:"var(--surface)",backdropFilter:"saturate(180%) blur(24px)",WebkitBackdropFilter:"saturate(180%) blur(24px)",borderBottom:"1px solid var(--sep)",height:52,display:"flex",alignItems:"center",padding:"0 20px",gap:12,position:"sticky",top:0,zIndex:50}}>
+        <button className="btn btn-ghost" onClick={onBack}>← Back</button>
+        <div style={{fontWeight:700,fontSize:16,letterSpacing:"-0.2px"}}>CapitalIQ</div>
+        <div style={{fontSize:13,color:"var(--text-tertiary)"}}>/</div>
+        <div style={{fontSize:14,color:"var(--text-secondary)"}}>My Profile</div>
+      </div>
+      <div style={{maxWidth:640,margin:"0 auto",padding:"32px 20px"}}>
+        <div className="card fade-up" style={{marginBottom:14}}>
+          <div style={{padding:24,display:"flex",alignItems:"center",gap:16}}>
+            <div style={{width:60,height:60,borderRadius:"50%",background:"var(--blue)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:700,color:"#fff",flexShrink:0}}>{init}</div>
+            <div>
+              <div className="t-title3" style={{marginBottom:2}}>{u.name||"My Account"}</div>
+              <div style={{fontSize:13,color:"var(--text-tertiary)"}}>{u.email}</div>
+              <span style={{display:"inline-block",marginTop:6,fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--blue-bg)",color:"var(--blue)",textTransform:"uppercase",letterSpacing:"0.5px"}}>Free Plan</span>
             </div>
           </div>
         </div>
-
-        {/* Key metrics strip */}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", borderTop:"1px solid var(--border)" }}>
-          {[
-            { label:"Final Value",  value: fmtK(totals.finalBalance), color:"var(--emerald)" },
-            { label:"NPV",          value: fmtK(totals.npv),          color: good ? "var(--emerald)" : "var(--red)" },
-            { label:"IRR",          value: totals.irr ? `${(totals.irr*100).toFixed(1)}%` : "N/A", color:"var(--ink)" },
-            { label:"Payback",      value: totals.payback >= 0 ? `${totals.payback+1} yrs` : ">10y", color:"var(--ink)" },
-          ].map((k,i) => (
-            <div key={k.label} style={{ padding:"16px 20px", borderRight: i<3 ? "1px solid var(--border)" : "none" }}>
-              <div style={{ fontSize:10, color:"var(--ink3)", textTransform:"uppercase", letterSpacing:"0.6px", marginBottom:4, fontWeight:600 }}>{k.label}</div>
-              <div style={{ fontFamily:"var(--serif)", fontSize:20, color:k.color, fontWeight:700 }}>{k.value}</div>
+        <div className="card fade-up" style={{marginBottom:14}}>
+          <div className="card-header"><div className="t-headline">Account Details</div></div>
+          {[{l:"Full Name",v:u.name||"—"},{l:"Email",v:u.email||"—"},{l:"Account Type",v:"Email & Password"},{l:"Plan",v:"Free"}].map((r,i,arr)=>(
+            <div key={r.l} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 20px",borderBottom:i<arr.length-1?"1px solid var(--sep)":"none"}}>
+              <span style={{fontSize:13,color:"var(--text-tertiary)",fontWeight:500}}>{r.l}</span>
+              <span style={{fontSize:13,fontWeight:500}}>{r.v}</span>
             </div>
           ))}
         </div>
-      </div>
-
-      {/* Report sections */}
-      {sections.map((sec, i) => (
-        <div className="acard fade-up" key={sec.title} style={{ marginBottom:12, animationDelay:`${i*0.06}s` }}>
-          <div className="acard-header">
-            <span style={{ fontSize:11, color:"var(--ink3)", fontWeight:700, letterSpacing:"0.8px", textTransform:"uppercase" }}>
-              {String(i+1).padStart(2,"0")} — {sec.title}
-            </span>
-          </div>
-          <div className="acard-body">
-            {sec.content && (
-              <div style={{ fontSize:13, color:"var(--ink2)", lineHeight:1.7, whiteSpace:"pre-line" }}>{sec.content}</div>
-            )}
-            {sec.table && (
-              <table className="data-table">
-                <tbody>
-                  {sec.table.map(r => (
-                    <tr key={r.label} style={{ background: r.highlight ? "var(--emerald-l)" : "transparent" }}>
-                      <td style={{ textAlign:"left", fontWeight:500, color: r.highlight ? "var(--emerald)" : "var(--ink2)", width:"50%" }}>{r.label}</td>
-                      <td style={{ fontWeight: r.highlight ? 700 : 400, color: r.highlight ? "var(--emerald)" : "var(--ink)" }}>{r.value}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+        <div className="card fade-up" style={{marginBottom:14}}>
+          <div className="card-header"><div className="t-headline">Change Password</div></div>
+          <div className="card-body">
+            {ok&&<div className="auth-ok">✓ Password updated successfully!</div>}
+            {err&&<div className="auth-err">⚠ {err}</div>}
+            <div style={{marginBottom:12}}>
+              <label className="auth-label">New Password</label>
+              <div className="pw-wrap"><input className="auth-input" type={show?"text":"password"} placeholder="Min. 6 characters" value={newPw} onChange={e=>setNewPw(e.target.value)} style={{paddingRight:50}}/><button className="pw-toggle" onClick={()=>setShow(s=>!s)}>{show?"Hide":"Show"}</button></div>
+            </div>
+            <div style={{marginBottom:16}}>
+              <label className="auth-label">Confirm Password</label>
+              <input className={`auth-input${conf&&conf!==newPw?" err":""}`} type={show?"text":"password"} placeholder="Repeat password" value={conf} onChange={e=>setConf(e.target.value)} onKeyDown={e=>e.key==="Enter"&&changePw()}/>
+              {conf&&conf!==newPw&&<div style={{fontSize:11,color:"var(--red)",marginTop:3}}>Passwords don't match</div>}
+            </div>
+            <button className={`auth-btn${loading?" loading":""}`} onClick={changePw} disabled={loading}>{loading?"":"Update Password →"}</button>
           </div>
         </div>
-      ))}
-
-      {/* Print hint */}
-      <div style={{ textAlign:"center", padding:"20px 0", fontSize:12, color:"var(--ink3)" }}>
-        💡 To save as PDF: press <strong>Cmd+P</strong> (Mac) or <strong>Ctrl+P</strong> (Windows) → "Save as PDF"
+        <div className="card fade-up" style={{border:"1px solid var(--red)"}}>
+          <div className="card-header" style={{background:"var(--red-bg)"}}><div className="t-headline" style={{color:"var(--red)"}}>⚠ Account Actions</div></div>
+          <div className="card-body">
+            <p style={{fontSize:13,color:"var(--text-secondary)",marginBottom:14,lineHeight:1.6}}>Signing out ends your current session. You can sign back in at any time.</p>
+            <button className="btn btn-destructive" onClick={onLogout}>Sign out</button>
+          </div>
+        </div>
       </div>
     </div>
   );
 }
-
-const SCENARIO_PRESETS = {
-  Base:   { rate: 7,  monthly: 500,  wacc: 10, principal: 10000, years: 20, revenue: 200000, revenueGrowth: 5,  cogsPercent: 55, opexPercent: 20, capex: 0, debtAmount: 0, interestRate: 5 },
-  Bull:   { rate: 11, monthly: 750,  wacc: 8,  principal: 15000, years: 25, revenue: 300000, revenueGrowth: 10, cogsPercent: 50, opexPercent: 18, capex: 0, debtAmount: 0, interestRate: 5 },
-  Bear:   { rate: 4,  monthly: 250,  wacc: 13, principal: 5000,  years: 15, revenue: 120000, revenueGrowth: 2,  cogsPercent: 62, opexPercent: 25, capex: 0, debtAmount: 0, interestRate: 5 },
-  Stress: { rate: 1.5,monthly: 100, wacc: 16, principal: 2000,  years: 10, revenue: 80000,  revenueGrowth: 0,  cogsPercent: 70, opexPercent: 28, capex: 0, debtAmount: 0, interestRate: 8 },
+/* ══ APP SHELL WITH SIDEBAR ════════════════════════════════════════════ */
+const SCENARIOS={
+  Base:  {discountRate:10,taxRate:21,inflationRate:2,operationYears:5,tvGrowth:2},
+  Bull:  {discountRate:8, taxRate:19,inflationRate:1.5,operationYears:7,tvGrowth:3},
+  Bear:  {discountRate:13,taxRate:25,inflationRate:4,operationYears:5,tvGrowth:1},
+  Stress:{discountRate:16,taxRate:28,inflationRate:6,operationYears:4,tvGrowth:0},
 };
 
-const DEFAULT_INPUTS = {
-  principal: 10000, monthly: 500, rate: 7, years: 20,
-  compound: "monthly", inflation: 2, wacc: 10, tax: 21,
-  revenue: 0, revenueGrowth: 5, cogsPercent: 55, opexPercent: 20,
-  capex: 0, debtAmount: 0, interestRate: 5,
-};
+const NAV_ITEMS=[
+  {id:"overview",  icon:"⬛",label:"Overview"},
+  {id:"capex",     icon:"🏗",label:"CAPEX"},
+  {id:"revenue",   icon:"📈",label:"Revenue"},
+  {id:"costs",     icon:"💸",label:"Costs"},
+  {id:"wc",        icon:"💧",label:"Working Capital"},
+  {id:"results",   icon:"🏆",label:"Results"},
+  {id:"cashflow",  icon:"💰",label:"Cash Flow"},
+  {id:"sensitivity",icon:"🔬",label:"Sensitivity"},
+  {id:"scenarios", icon:"🎭",label:"Scenarios"},
+  {id:"proposal",  icon:"📄",label:"Proposal"},
+];
 
-function AppScreen({ onBack, currencyCode, setCurrencyCode, project, onSave, session, onShowProfile }) {
-  const { symbol } = useCurrency();
-  const [appTab, setAppTab]     = useState("calculator");
-  const [scenario, setScenario] = useState("Base");
-  const [saved, setSaved]       = useState(false);
-  const [projectName, setProjectName] = useState(project?.name || "New Investment Project");
-  const [inputs, setInputs] = useState({ ...DEFAULT_INPUTS, ...(project?.inputs || {}) });
+function AppShell({project,onBack,onSave,session,onProfile,currency,setCurrency}){
+  const{sym}=useCur();
+  const[tab,setTab]=useState("overview");
+  const[scenario,setScenario]=useState("Base");
+  const[saved,setSaved]=useState(false);
+  const[projName,setProjName]=useState(project?.name||"New Investment Project");
+  const[inputs,setInputs]=useState({...DEF,...(project?.inputs||{})});
+  const setI=useCallback((k,v)=>setInputs(p=>({...p,[k]:v})),[]);
+  const results=useMemo(()=>calcFinancials(inputs),[inputs]);
+  const totalYears=clamp(inputs.constructionYears,0,5)+clamp(inputs.operationYears,1,30);
 
-  const setI = (k, v) => { setInputs(p => ({ ...p, [k]: v })); setSaved(false); };
+  const applyScenario=s=>{setScenario(s);setInputs(p=>({...p,...SCENARIOS[s]}));};
 
-  const applyScenario = (s) => {
-    setScenario(s);
-    setInputs(p => ({ ...p, ...SCENARIO_PRESETS[s] }));
-    setSaved(false);
+  const handleSave=async()=>{
+    if(project&&onSave){await onSave(project.id,inputs,results);setSaved(true);setTimeout(()=>setSaved(false),2500);}
   };
 
-  const handleSave = () => {
-    if (project && onSave) {
-      onSave(project.id, inputs, totals);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
-    }
-  };
+  const good=results.npv>0;
 
-  const { schedule, totals } = useMemo(() => calcSchedule(inputs), [inputs]);
-
-  const TABS = [
-    { id: "calculator",  label: "Calculator" },
-    { id: "scenarios",   label: "Scenarios" },
-    { id: "dcf",         label: "DCF / IRR" },
-    { id: "ratios",      label: "Fin. Ratios" },
-    { id: "dupont",      label: "DuPont" },
-    { id: "schedule",    label: "Schedule" },
-    { id: "sensitivity", label: "Sensitivity" },
-    { id: "charts",      label: "Charts" },
-    { id: "proposal",    label: "Proposal" },
-  ];
-
-  return (
-    <div className="app-screen">
-      <div className="app-topbar">
-        <div style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }} onClick={onBack}>
-          <span style={{ fontSize:18, color:"var(--ink3)" }}>←</span>
-          <div className="app-logo">Capital<span>IQ</span></div>
+  return(
+    <div className="app-shell">
+      {/* SIDEBAR */}
+      <aside className="sidebar">
+        <div className="sidebar-logo" onClick={onBack}>
+          <div className="logo-mark">C</div>
+          <span className="logo-text">Capital<span>IQ</span></span>
         </div>
-        <input value={projectName} onChange={e => setProjectName(e.target.value)}
-          style={{ background:"var(--cream)", border:"1px solid var(--border)", borderRadius:6, padding:"6px 12px", fontSize:14, color:"var(--ink)", outline:"none", flex:1, maxWidth:280 }} />
-        <select value={currencyCode} onChange={e => setCurrencyCode(e.target.value)}
-          style={{ background:"var(--cream)", border:"1px solid var(--border)", borderRadius:6, padding:"7px 10px", fontSize:13, fontWeight:600, color:"var(--emerald)", fontFamily:"var(--sans)", cursor:"pointer", outline:"none", minWidth:90 }}>
-          {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.symbol} {c.code}</option>)}
-        </select>
-        <button onClick={handleSave}
-          style={{ padding:"7px 16px", borderRadius:6, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"var(--sans)", border:"none", transition:"all 0.15s",
-            background: saved ? "var(--emerald-l)" : "var(--emerald)", color: saved ? "var(--emerald)" : "#fff" }}>
-          {saved ? "✓ Saved" : "Save"}
-        </button>
-        <button onClick={() => { setAppTab("proposal"); setTimeout(() => window.print(), 300); }}
-          style={{ padding:"7px 14px", borderRadius:6, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"var(--sans)", border:"1px solid var(--border)", background:"var(--cream)", color:"var(--ink)", transition:"all 0.15s" }}
-          title="Export as PDF">📄 PDF
-        </button>
-        {/* Profile button */}
-        <button onClick={onShowProfile}
-          style={{ width:34, height:34, borderRadius:"50%", background:"var(--emerald-l)", border:"1.5px solid var(--emerald)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, color:"var(--emerald)", flexShrink:0 }}
-          title="My Profile">
-          {session?.user?.name?.[0]?.toUpperCase() || "U"}
-        </button>
-      </div>
-
-      <div className="app-tabs">
-        {TABS.map(t => (
-          <button key={t.id} className={`app-tab ${appTab===t.id?"active":""}`} onClick={() => setAppTab(t.id)}>
-            {t.label}
+        <div className="sidebar-nav">
+          <div className="sidebar-section-label">Analysis</div>
+          {NAV_ITEMS.map(n=>(
+            <button key={n.id} className={`nav-item${tab===n.id?" active":""}`} onClick={()=>setTab(n.id)}>
+              <div className="nav-icon">{n.icon}</div>
+              {n.label}
+            </button>
+          ))}
+        </div>
+        <div className="sidebar-bottom">
+          <div className="sidebar-result-pill">
+            <div className="sidebar-result-row">
+              <span className="sidebar-result-label">NPV</span>
+              <span className="sidebar-result-val" style={{color:good?"var(--green)":"var(--red)"}}>{(() => {const c=CURRENCIES.find(x=>x.code===currency)||CURRENCIES[1];const n=results.npv;if(!isFinite(n))return"—";const a=Math.abs(n);if(a>=1e6)return`${n<0?"-":""}${c.sym}${(Math.abs(n)/1e6).toFixed(1)}M`;if(a>=1e3)return`${c.sym}${(Math.abs(n)/1e3).toFixed(0)}K`;return`${c.sym}${Math.round(n)}`;})()}</span>
+            </div>
+            <div className="sidebar-result-row">
+              <span className="sidebar-result-label">IRR</span>
+              <span className="sidebar-result-val" style={{color:"var(--blue)"}}>{pct(results.irr?results.irr*100:null)}</span>
+            </div>
+            <div className="sidebar-result-row" style={{marginTop:4}}>
+              <span className="sidebar-result-label">Verdict</span>
+              <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:good?"var(--green-bg)":"var(--red-bg)",color:good?"var(--green)":"var(--red)"}}>{good?"✓ Viable":"✗ Review"}</span>
+            </div>
+          </div>
+          <button className="btn btn-sm btn-secondary" style={{width:"100%",justifyContent:"flex-start",gap:8}} onClick={onProfile}>
+            <div style={{width:22,height:22,borderRadius:"50%",background:"var(--blue)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",flexShrink:0}}>{(session?.user?.name||"U")[0].toUpperCase()}</div>
+            {session?.user?.name||"Profile"}
           </button>
-        ))}
-      </div>
-
-      <div className="app-body">
-        {/* Print-only header */}
-        <div className="print-header" style={{ marginBottom:16, paddingBottom:12, borderBottom:"2px solid #0d7a55" }}>
-          <div style={{ fontFamily:"var(--serif)", fontSize:22, color:"#0f1117" }}>CapitalIQ — Investment Report</div>
-          <div style={{ fontSize:13, color:"#8a8fa8", marginTop:4 }}>{projectName} · {new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</div>
         </div>
-        {appTab === "calculator"  && <CalcTab    inputs={inputs} setI={setI} totals={totals} schedule={schedule} />}
-        {appTab === "scenarios"   && <ScenTab    inputs={inputs} applyScenario={applyScenario} scenario={scenario} />}
-        {appTab === "dcf"         && <DCFTab2    totals={totals} schedule={schedule} inputs={inputs} />}
-        {appTab === "ratios"      && <RatiosTab  inputs={inputs} totals={totals} schedule={schedule} />}
-        {appTab === "dupont"      && <DuPontTab  inputs={inputs} totals={totals} schedule={schedule} />}
-        {appTab === "schedule"    && <SchedTab2  schedule={schedule} />}
-        {appTab === "sensitivity" && <SensTab2   inputs={inputs} />}
-        {appTab === "charts"      && <ChartsTab2 schedule={schedule} />}
-        {appTab === "proposal"    && <ProposalTab inputs={inputs} totals={totals} schedule={schedule} projectName={projectName} />}
+      </aside>
+
+      {/* MAIN */}
+      <div className="main">
+        {/* TOPBAR */}
+        <div className="topbar">
+          <button className="btn btn-ghost btn-sm no-print" onClick={onBack}>← Dashboard</button>
+          <input value={projName} onChange={e=>setProjName(e.target.value)}
+            style={{flex:1,maxWidth:280,height:32,padding:"0 10px",background:"var(--fill)",border:"1px solid var(--sep)",borderRadius:"var(--r-sm)",fontFamily:"inherit",fontSize:13,fontWeight:600,color:"var(--text-primary)",outline:"none"}}/>
+          <select value={currency} onChange={e=>setCurrency(e.target.value)}
+            style={{background:"var(--fill)",border:"1px solid var(--sep)",borderRadius:7,padding:"4px 8px",fontSize:12,fontWeight:700,color:"var(--blue)",fontFamily:"inherit",cursor:"pointer",outline:"none"}}>
+            {CURRENCIES.map(c=><option key={c.code} value={c.code}>{c.sym} {c.code}</option>)}
+          </select>
+          <button className="btn btn-sm no-print" style={{background:saved?"var(--green-bg)":"var(--blue)",color:saved?"var(--green)":"#fff",border:saved?"1px solid var(--green)":"none"}} onClick={handleSave}>
+            {saved?"✓ Saved":"Save"}
+          </button>
+          <button className="btn btn-sm btn-secondary no-print" onClick={()=>{setTab("proposal");setTimeout(()=>window.print(),300);}}>📄 PDF</button>
+        </div>
+
+        {/* CONTENT */}
+        <div className="content">
+          <div className="print-header" style={{marginBottom:14,paddingBottom:10,borderBottom:"2px solid var(--blue)"}}>
+            <div style={{fontSize:20,fontWeight:700}}>CapitalIQ — {projName}</div>
+            <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:3}}>{new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</div>
+          </div>
+          {tab==="overview"    && <OverviewTab    inputs={inputs} setI={setI} results={results} totalYears={totalYears}/>}
+          {tab==="capex"       && <CapexTab       inputs={inputs} setI={setI} results={results} totalYears={totalYears}/>}
+          {tab==="revenue"     && <RevenueTab     inputs={inputs} setI={setI} results={results}/>}
+          {tab==="costs"       && <CostsTab       inputs={inputs} setI={setI} results={results}/>}
+          {tab==="wc"          && <WCTab          inputs={inputs} setI={setI} results={results}/>}
+          {tab==="results"     && <ResultsTab     inputs={inputs} results={results}/>}
+          {tab==="cashflow"    && <CashFlowTab    results={results}/>}
+          {tab==="sensitivity" && <SensitivityTab inputs={inputs} results={results}/>}
+          {tab==="scenarios"   && <ScenariosTab   inputs={inputs} scenario={scenario} applyScenario={applyScenario}/>}
+          {tab==="proposal"    && <ProposalTab    inputs={inputs} results={results} projName={projName}/>}
+        </div>
       </div>
     </div>
   );
 }
 
-/* ── Calculator Tab ──────────────────────────────────────────────────── */
-function CalcTab({ inputs, setI, totals, schedule }) {
-  const { fmtK, symbol } = useFmt();
-  const good = totals.npv > 0;
-  const hasRevenue = Number(inputs.revenue) > 0;
+// small helper for sidebar
+function var_(k,fallback){return`var(--${k},${fallback})`;}
+function var__(k){return`var(--${k})`;}
 
-  // Validated input handler
-  const setV = (key, val, min, max) => {
-    const n = Number(val);
-    if (isNaN(n)) return;
-    const clamped = Math.max(min, Math.min(max, n));
-    setI(key, clamped);
-  };
+/* ── Shared input helper ── */
+function Inp({label,value,onChange,pre,suf,min=0,max=9999,step=1,type="number",note,disabled}){
+  return(
+    <div className="input-group">
+      {label&&<label className="input-label">{label}{note&&<span style={{color:"var(--text-quaternary)",fontWeight:400,marginLeft:4}}>({note})</span>}</label>}
+      <div className="input-wrap">
+        {pre&&<span className="input-prefix">{pre}</span>}
+        <input className={`input-field${pre?" has-prefix":""}${suf?" has-suffix":""}`}
+          type={type} value={value??""} min={min} max={max} step={step} disabled={disabled}
+          onChange={e=>onChange(e.target.value)}
+          onBlur={e=>{if(type==="number"){const n=Number(e.target.value);if(isFinite(n)) onChange(Math.max(min,Math.min(max,n)));}}}/>
+        {suf&&<span className="input-suffix">{suf}</span>}
+      </div>
+    </div>
+  );
+}
 
-  return (
-    <div>
-      {/* KPI bar */}
-      <div className="kpi-bar fade-up">
+/* ══ OVERVIEW TAB ══════════════════════════════════════════════════════ */
+function OverviewTab({inputs,setI,results,totalYears}){
+  const{fmt,sym}=useFmt();
+  const good=results.npv>0;
+  const{sched}=results;
+
+  return(
+    <div className="fade-up">
+      {/* KPI row */}
+      <div className="kpi-grid" style={{marginBottom:20}}>
         {[
-          { label: "Final Value",    value: fmtK(totals.finalBalance), cls: "gold" },
-          { label: "NPV (Nominal)",  value: fmtK(totals.npv),  cls: good ? "green" : "red", badge: good ? "good" : "bad", badgeText: good ? "✓ Creates Value" : "✗ Destroys Value" },
-          { label: "NPV (Real)",     value: fmtK(totals.npvReal || 0), cls: (totals.npvReal||0) > 0 ? "green" : "red" },
-          { label: "IRR",            value: totals.irr ? pct(totals.irr*100) : "N/A", cls: totals.irr > Number(inputs.wacc)/100 ? "green" : "red" },
-        ].map(k => (
-          <div className="kpi-box" key={k.label}>
-            <div className="kpi-box-label">{k.label}</div>
-            <div className={`kpi-box-value ${k.cls}`}>{k.value}</div>
-            {k.badge && <div className={`kpi-badge ${k.badge}`}>{k.badgeText}</div>}
+          {l:"NPV (Nominal)",v:fmt(results.npv),c:good?"green":"red",b:good?"badge-green":"badge-red",bt:good?"✓ Creates Value":"✗ Destroys Value"},
+          {l:"NPV (Real)",v:fmt(results.npvR),c:(results.npvR||0)>0?"green":"red"},
+          {l:"IRR",v:pct(results.irr?results.irr*100:null),c:results.irr&&results.irr>inputs.discountRate/100?"green":"red"},
+          {l:"Payback Period",v:results.pb>=0?`${results.pb} years`:">projection",c:""},
+          {l:"MIRR",v:pct(results.mirr?results.mirr*100:null),c:""},
+          {l:"PI",v:xN(results.pi),c:results.pi>1?"green":"red"},
+          {l:"RONA",v:pct((results.rona||0)*100),c:""},
+          {l:"Total CAPEX",v:fmt(results.totCapex),c:"amber"},
+        ].map(k=>(
+          <div className="kpi-card" key={k.l}>
+            <div className="kpi-label">{k.l}</div>
+            <div className={`kpi-value t-num ${k.c==="amber"?"amber":k.c}`}>{k.v}</div>
+            {k.b&&<div className={`kpi-badge ${k.b}`}>{k.bt}</div>}
           </div>
         ))}
       </div>
 
-      {/* Inflation impact note */}
-      {Number(inputs.inflation) > 0 && (
-        <div style={{ background:"var(--gold-l)", border:"1px solid #e6c874", borderRadius:8, padding:"10px 14px", marginBottom:16, fontSize:12, color:"#7a5c13", display:"flex", gap:8, alignItems:"flex-start" }}>
+      {/* Inflation note */}
+      {Number(inputs.inflationRate)>0&&(
+        <div className="info-banner info-blue" style={{marginBottom:18}}>
           <span>ℹ️</span>
-          <span>With <strong>{inputs.inflation}% inflation</strong>, real WACC = <strong>{(((1+Number(inputs.wacc)/100)/(1+Number(inputs.inflation)/100)-1)*100).toFixed(1)}%</strong> (Fisher equation). Real NPV <strong>{fmtK(totals.npvReal||0)}</strong> vs nominal <strong>{fmtK(totals.npv)}</strong>. Inflation is now factored into all calculations.</span>
+          <span>Inflation {inputs.inflationRate}% → Real WACC = <strong>{(((1+Number(inputs.discountRate)/100)/(1+Number(inputs.inflationRate)/100)-1)*100).toFixed(2)}%</strong> (Fisher equation). Nominal NPV <strong>{fmt(results.npv)}</strong> vs Real NPV <strong>{fmt(results.npvR)}</strong>.</span>
         </div>
       )}
 
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
+      {results.tv>0&&(
+        <div className="info-banner info-green" style={{marginBottom:18}}>
+          <span>🏁</span>
+          <span>Terminal value ({inputs.tvMethod==="perpetuity"?`Gordon Growth @ ${inputs.tvGrowth}%`:`EV Multiple ${inputs.evMult}×`}): <strong>{fmt(results.tv)}</strong> · PV of TV: <strong>{fmt(results.tvPV)}</strong></span>
+        </div>
+      )}
 
-        {/* Core investment inputs */}
-        <div className="acard fade-up fade-up-1">
-          <div className="acard-header">
-            <span className="acard-title">Core Investment Parameters</span>
-            <span className="acard-sub" style={{ fontSize:10, color:"var(--ink3)" }}>Blue = inputs you control</span>
-          </div>
-          <div className="acard-body">
-            <div className="input-grid">
-              {[
-                { label:"Initial Investment",    key:"principal",  pre:symbol, min:0,    max:1e9 },
-                { label:"Monthly Contribution",  key:"monthly",    pre:symbol, min:0,    max:1e7 },
-                { label:"Annual Return Rate",    key:"rate",       suf:"%",   min:0,    max:100 },
-                { label:"Time Horizon",          key:"years",      suf:"yrs", min:1,    max:50  },
-                { label:"Inflation Rate",        key:"inflation",  suf:"%",   min:0,    max:50  },
-                { label:"Discount Rate (WACC)",  key:"wacc",       suf:"%",   min:0.1,  max:100 },
-                { label:"Corporate Tax Rate",    key:"tax",        suf:"%",   min:0,    max:99  },
-              ].map(f => (
-                <div className="input-group" key={f.key}>
-                  <label className="input-label">{f.label}</label>
-                  <div className="input-row-app">
-                    {f.pre && <span className="input-prefix">{f.pre}</span>}
-                    <input className="input-field-app" type="number"
-                      value={inputs[f.key] ?? ""}
-                      min={f.min} max={f.max}
-                      onChange={e => setI(f.key, e.target.value)}
-                      onBlur={e => setV(f.key, e.target.value, f.min, f.max)}
-                      inputMode="decimal" style={{ color:"#0000FF" }} />
-                    {f.suf && <span className="input-suffix">{f.suf}</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div style={{ marginTop:16 }}>
-              <label className="input-label" style={{ display:"block", marginBottom:5 }}>Compounding</label>
-              <div className="input-row-app">
-                <select className="select-app" value={inputs.compound} onChange={e => setI("compound", e.target.value)}>
+      <div className="grid-2">
+        {/* Parameters */}
+        <div className="card">
+          <div className="card-header"><div className="t-headline">Project Parameters</div></div>
+          <div className="card-body">
+            <div className="grid-2">
+              <Inp label="Construction Phase" value={inputs.constructionYears} onChange={v=>setI("constructionYears",v)} suf="years" min={0} max={5}/>
+              <Inp label="Operation Phase"    value={inputs.operationYears}    onChange={v=>setI("operationYears",v)}    suf="years" min={1} max={30}/>
+              <Inp label="WACC / Discount Rate" value={inputs.discountRate}   onChange={v=>setI("discountRate",v)}  suf="%" min={0.1} max={100} step={0.1}/>
+              <Inp label="Corporate Tax Rate"   value={inputs.taxRate}         onChange={v=>setI("taxRate",v)}        suf="%" min={0} max={99} step={0.1}/>
+              <Inp label="Inflation Rate"        value={inputs.inflationRate}  onChange={v=>setI("inflationRate",v)}  suf="%" min={0} max={50} step={0.1}/>
+              <div className="input-group">
+                <label className="input-label">Compounding</label>
+                <select className="select-field" value={inputs.compound||"annual"} onChange={e=>setI("compound",e.target.value)}>
+                  <option value="annual">Annual</option>
                   <option value="monthly">Monthly</option>
-                  <option value="quarterly">Quarterly</option>
-                  <option value="annually">Annually</option>
                 </select>
               </div>
             </div>
           </div>
         </div>
 
-        {/* P&L inputs */}
-        <div className="acard fade-up fade-up-2">
-          <div className="acard-header">
-            <span className="acard-title">Revenue & Cost Inputs</span>
-            <span className="acard-sub" style={{ fontSize:10, color:"var(--ink3)" }}>For proper FCF calculation</span>
+        {/* Financing + TV */}
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div className="card">
+            <div className="card-header"><div className="t-headline">Financing</div></div>
+            <div className="card-body">
+              <div className="grid-2">
+                <Inp label="Debt Amount"   value={inputs.debtAmt}  onChange={v=>setI("debtAmt",v)}  pre={sym} min={0}/>
+                <Inp label="Interest Rate" value={inputs.intRate}   onChange={v=>setI("intRate",v)}   suf="%" min={0} max={50} step={0.1}/>
+                <Inp label="Loan Term"     value={inputs.loanYrs}   onChange={v=>setI("loanYrs",v)}   suf="yrs" min={1} max={30}/>
+              </div>
+            </div>
           </div>
-          <div className="acard-body">
-            <div style={{ fontSize:11, color:"var(--ink3)", background:"var(--cream)", padding:"8px 10px", borderRadius:6, marginBottom:12 }}>
-              {hasRevenue
-                ? "✅ Using real P&L model — FCF from EBIT × (1-tax) + depreciation"
-                : "⚠️ No revenue entered — using portfolio-growth approximation. Enter revenue for professional accuracy."}
+          <div className="card">
+            <div className="card-header">
+              <div className="t-headline">Terminal Value</div>
+              <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:13}}>
+                <button className={`toggle${inputs.useTv?" on":""}`} onClick={()=>setI("useTv",!inputs.useTv)}/>
+                <span style={{color:"var(--text-secondary)"}}>{inputs.useTv?"Enabled":"Disabled"}</span>
+              </label>
             </div>
-            <div className="input-grid">
-              {[
-                { label:"Year 1 Revenue",       key:"revenue",       pre:symbol, min:0,   max:1e10 },
-                { label:"Revenue Growth/yr",    key:"revenueGrowth", suf:"%",    min:-50, max:100  },
-                { label:"COGS (% of revenue)",  key:"cogsPercent",   suf:"%",    min:0,   max:100  },
-                { label:"OpEx (% of revenue)",  key:"opexPercent",   suf:"%",    min:0,   max:100  },
-                { label:"CAPEX (one-time)",      key:"capex",         pre:symbol, min:0,   max:1e10 },
-                { label:"Debt Amount",           key:"debtAmount",    pre:symbol, min:0,   max:1e10 },
-                { label:"Interest Rate on Debt", key:"interestRate",  suf:"%",    min:0,   max:50   },
-              ].map(f => (
-                <div className="input-group" key={f.key}>
-                  <label className="input-label">{f.label}</label>
-                  <div className="input-row-app">
-                    {f.pre && <span className="input-prefix">{f.pre}</span>}
-                    <input className="input-field-app" type="number"
-                      value={inputs[f.key] ?? ""}
-                      min={f.min} max={f.max}
-                      onChange={e => setI(f.key, e.target.value)}
-                      onBlur={e => setV(f.key, e.target.value, f.min, f.max)}
-                      inputMode="decimal" style={{ color:"#0000FF" }} />
-                    {f.suf && <span className="input-suffix">{f.suf}</span>}
-                  </div>
+            {inputs.useTv&&(
+              <div className="card-body">
+                <div style={{marginBottom:12}}>
+                  <label className="input-label">Method</label>
+                  <select className="select-field" value={inputs.tvMethod||"perpetuity"} onChange={e=>setI("tvMethod",e.target.value)}>
+                    <option value="perpetuity">Gordon Growth / Perpetuity</option>
+                    <option value="multiple">EV / EBITDA Multiple</option>
+                  </select>
                 </div>
-              ))}
-            </div>
+                {(inputs.tvMethod||"perpetuity")==="perpetuity"
+                  ? <Inp label="Terminal Growth Rate" value={inputs.tvGrowth} onChange={v=>setI("tvGrowth",v)} suf="%" min={-5} max={20} step={0.1}/>
+                  : <Inp label="EV/EBITDA Multiple"   value={inputs.evMult}  onChange={v=>setI("evMult",v)}   min={1} max={50} step={0.5}/>
+                }
+                {results.tv>0&&<div style={{marginTop:10,padding:"9px 12px",background:"var(--green-bg)",borderRadius:"var(--r-sm)",fontSize:12,color:"var(--green)",fontWeight:500}}>TV: {fmt(results.tv)} · PV: {fmt(results.tvPV)}</div>}
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* P&L preview if revenue entered */}
-      {hasRevenue && schedule.length > 0 && (
-        <div className="acard fade-up" style={{ marginTop:16 }}>
-          <div className="acard-header"><span className="acard-title">P&L Preview (Year 1 vs Final Year)</span></div>
-          <table className="data-table">
+      {/* Revenue overview chart */}
+      {sched.length>0&&(
+        <div className="card" style={{marginTop:14}}>
+          <div className="card-header"><div className="t-headline">Revenue & Net Income</div></div>
+          <div style={{padding:"14px 16px 8px"}}>
+            <ResponsiveContainer width="100%" height={220}>
+              <ComposedChart data={sched} margin={{top:5,right:16,left:0,bottom:0}}>
+                <defs>
+                  <linearGradient id="gR" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="var(--blue)" stopOpacity={0.2}/><stop offset="95%" stopColor="var(--blue)" stopOpacity={0}/></linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--sep)" vertical={false}/>
+                <XAxis dataKey="year" tick={{fill:"var(--text-tertiary)",fontSize:11}} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={v=>fmt(v)} tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false} width={60}/>
+                <Tooltip content={<ChartTip/>}/>
+                <Area type="monotone" dataKey="revenue" name="Revenue" stroke="var(--blue)" fill="url(#gR)" strokeWidth={2}/>
+                <Bar dataKey="netIncome" name="Net Income" fill="var(--green)" radius={[4,4,0,0]} opacity={0.85}/>
+                <ReferenceLine y={0} stroke="var(--sep)"/>
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══ CAPEX TAB ═════════════════════════════════════════════════════════ */
+function CapexTab({inputs,setI,results,totalYears}){
+  const{fmt,sym}=useFmt();
+  const yrs=Array.from({length:Math.min(totalYears,7)},(_,i)=>i);
+  const opsY=clamp(inputs.constructionYears,0,5);
+
+  const upd=(idx,field,val)=>{const rows=[...(inputs.capexRows||[])];rows[idx]={...rows[idx],[field]:val};setI("capexRows",rows);};
+  const updAmt=(idx,yi,val)=>{const rows=[...(inputs.capexRows||[])];const amts=[...(rows[idx].amts||Array(7).fill(0))];amts[yi]=Number(val)||0;rows[idx]={...rows[idx],amts};setI("capexRows",rows);};
+  const totPerYr=yrs.map(yi=>(inputs.capexRows||[]).filter(r=>r.on).reduce((s,r)=>s+(Number((r.amts||[])[yi])||0),0));
+
+  return(
+    <div className="fade-up">
+      <div className="card" style={{marginBottom:14}}>
+        <div className="card-header">
+          <div className="t-headline">Capital Expenditure Schedule</div>
+          <div style={{fontSize:13,color:"var(--text-tertiary)"}}>Grand Total: <strong style={{color:"var(--amber)"}}>{fmt(results.totCapex)}</strong></div>
+        </div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,minWidth:800}}>
             <thead>
-              <tr><th style={{textAlign:"left"}}>Line Item</th><th>Year 1</th><th>Year {schedule.length}</th><th>Growth</th></tr>
+              <tr style={{background:"var(--fill)"}}>
+                <th style={{padding:"9px 12px",textAlign:"left",fontWeight:600,fontSize:11,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.3px",borderBottom:"1px solid var(--sep)",minWidth:160}}>Item</th>
+                {yrs.map(yi=>(
+                  <th key={yi} style={{padding:"9px 8px",textAlign:"right",fontWeight:600,fontSize:11,color:"var(--text-tertiary)",borderBottom:"1px solid var(--sep)",minWidth:80}}>
+                    <div>Year {yi+1}</div>
+                    <div style={{marginTop:2}}>{yi<opsY?<span className="phase-c">Const.</span>:<span className="phase-o">Oper.</span>}</div>
+                  </th>
+                ))}
+                <th style={{padding:"9px 8px",fontWeight:600,fontSize:11,color:"var(--text-tertiary)",borderBottom:"1px solid var(--sep)",minWidth:90}}>Depr.</th>
+                <th style={{padding:"9px 8px",fontWeight:600,fontSize:11,color:"var(--text-tertiary)",borderBottom:"1px solid var(--sep)",minWidth:55}}>Years</th>
+                <th style={{padding:"9px 8px",textAlign:"center",fontWeight:600,fontSize:11,color:"var(--text-tertiary)",borderBottom:"1px solid var(--sep)",width:36}}>On</th>
+              </tr>
             </thead>
             <tbody>
-              {[
-                { label:"Revenue",      k:"revenue"     },
-                { label:"Gross Profit", k:"grossProfit" },
-                { label:"EBITDA",       k:"ebitda"      },
-                { label:"EBIT",         k:"ebit"        },
-                { label:"Net Income",   k:"netIncome"   },
-                { label:"FCF",          k:"fcf"         },
-              ].map(r => {
-                const y1 = schedule[0]?.[r.k] || 0;
-                const yn = schedule[schedule.length-1]?.[r.k] || 0;
-                const growth = y1 !== 0 ? ((yn-y1)/Math.abs(y1))*100 : 0;
-                return (
-                  <tr key={r.label}>
-                    <td style={{textAlign:"left", fontWeight:500}}>{r.label}</td>
-                    <td style={{ color: y1 >= 0 ? "var(--ink)" : "var(--red)" }}>{fmtK(y1)}</td>
-                    <td style={{ color: yn >= 0 ? "var(--emerald)" : "var(--red)", fontWeight:600 }}>{fmtK(yn)}</td>
-                    <td style={{ color: growth >= 0 ? "var(--emerald)" : "var(--red)", fontSize:12 }}>{growth >= 0 ? "+" : ""}{growth.toFixed(1)}%</td>
+              {(inputs.capexRows||[]).map((row,idx)=>(
+                <tr key={idx} style={{background:idx%2?"var(--fill)":"var(--surface-solid)",opacity:row.on?1:0.4}}>
+                  <td style={{padding:"7px 10px",borderBottom:"1px solid var(--sep)"}}>
+                    <input value={row.name||""} onChange={e=>upd(idx,"name",e.target.value)}
+                      style={{width:"100%",border:"1px solid var(--sep)",borderRadius:"var(--r-sm)",padding:"4px 8px",fontSize:12,fontFamily:"inherit",background:"var(--fill)",color:"var(--text-primary)",outline:"none"}}/>
+                  </td>
+                  {yrs.map(yi=>(
+                    <td key={yi} style={{padding:"5px 4px",borderBottom:"1px solid var(--sep)",textAlign:"right"}}>
+                      <input type="number" value={(row.amts||[])[yi]||""} onChange={e=>updAmt(idx,yi,e.target.value)} disabled={!row.on}
+                        style={{width:72,border:"1px solid var(--sep)",borderRadius:"var(--r-sm)",padding:"4px 6px",fontSize:12,fontFamily:"inherit",textAlign:"right",background:"var(--fill)",color:"var(--blue)",fontWeight:600,outline:"none"}}/>
+                    </td>
+                  ))}
+                  <td style={{padding:"5px 6px",borderBottom:"1px solid var(--sep)"}}>
+                    <select value={row.deprM||"SL"} onChange={e=>upd(idx,"deprM",e.target.value)} disabled={!row.on}
+                      style={{fontSize:11,border:"1px solid var(--sep)",borderRadius:"var(--r-sm)",padding:"3px 5px",fontFamily:"inherit",background:"var(--fill)",color:"var(--text-primary)"}}>
+                      <option value="SL">Straight-Line</option>
+                      <option value="None">None</option>
+                    </select>
+                  </td>
+                  <td style={{padding:"5px 6px",borderBottom:"1px solid var(--sep)",textAlign:"right"}}>
+                    <input type="number" value={row.deprY||10} onChange={e=>upd(idx,"deprY",Number(e.target.value)||1)} disabled={!row.on||row.deprM==="None"}
+                      style={{width:46,border:"1px solid var(--sep)",borderRadius:"var(--r-sm)",padding:"3px 5px",fontSize:12,textAlign:"right",background:"var(--fill)",color:"var(--blue)",fontWeight:600,outline:"none"}}/>
+                  </td>
+                  <td style={{padding:"5px 8px",borderBottom:"1px solid var(--sep)",textAlign:"center"}}>
+                    <button className={`toggle${row.on?" on":""}`} onClick={()=>upd(idx,"on",!row.on)}/>
+                  </td>
+                </tr>
+              ))}
+              <tr style={{background:"var(--green-bg)"}}>
+                <td style={{padding:"9px 12px",fontWeight:700,color:"var(--green)",fontSize:13,borderTop:"1.5px solid var(--green)"}}>Total CAPEX</td>
+                {yrs.map(yi=><td key={yi} style={{padding:"9px 8px",textAlign:"right",fontWeight:700,color:"var(--green)",borderTop:"1.5px solid var(--green)"}}>{fmt(totPerYr[yi])}</td>)}
+                <td colSpan={3} style={{padding:"9px 8px",textAlign:"right",fontWeight:700,color:"var(--green)",borderTop:"1.5px solid var(--green)"}}>{fmt(results.totCapex)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header"><div className="t-headline">Depreciation Schedule</div></div>
+        <div style={{overflowX:"auto"}}>
+          <table className="data-table">
+            <thead><tr><th>Item</th>{yrs.map(yi=><th key={yi}>Yr {yi+1}</th>)}<th>Total</th></tr></thead>
+            <tbody>
+              {(inputs.capexRows||[]).filter(r=>r.on&&r.deprM!=="None").map((row,idx)=>{
+                const total=(row.amts||[]).reduce((a,b)=>a+(Number(b)||0),0);
+                const dy=clamp(row.deprY,1,50);
+                const ann=total/dy;
+                const st=(row.amts||[]).findIndex(a=>Number(a)>0);
+                const s=st>=0?st:0;
+                return(
+                  <tr key={idx}>
+                    <td>{row.name}</td>
+                    {yrs.map(yi=><td key={yi} style={{color:yi>=s&&yi<s+dy?"var(--blue)":"var(--text-quaternary)"}}>{yi>=s&&yi<s+dy?fmt(ann):"—"}</td>)}
+                    <td style={{fontWeight:600,color:"var(--amber)"}}>{fmt(ann*Math.min(dy,yrs-s))}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══ REVENUE TAB ═══════════════════════════════════════════════════════ */
+function RevenueTab({inputs,setI,results}){
+  const{fmt,sym}=useFmt();
+  const upd=(idx,k,v)=>{const lines=[...(inputs.revenueLines||[])];lines[idx]={...lines[idx],[k]:v};setI("revenueLines",lines);};
+
+  return(
+    <div className="fade-up">
+      <div className="card" style={{marginBottom:14}}>
+        <div className="card-header">
+          <div className="t-headline">Revenue Lines</div>
+          <div className="t-footnote">Revenue = Driver 1 × Driver 2 · grows annually</div>
+        </div>
+        <div className="card-body">
+          {(inputs.revenueLines||[]).map((line,idx)=>(
+            <div key={idx} style={{borderBottom:"1px solid var(--sep)",paddingBottom:16,marginBottom:16,opacity:line.on?1:0.45}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                <button className={`toggle${line.on?" on":""}`} onClick={()=>upd(idx,"on",!line.on)}/>
+                <input value={line.name||""} onChange={e=>upd(idx,"name",e.target.value)}
+                  style={{flex:1,border:"1px solid var(--sep)",borderRadius:"var(--r-sm)",padding:"6px 12px",fontSize:14,fontFamily:"inherit",fontWeight:600,color:"var(--text-primary)",background:"var(--fill)",outline:"none"}}/>
+                {line.on&&<div style={{fontSize:12,color:"var(--green)",fontWeight:600}}>Base: {fmt((line.d1||0)*(line.d2||0))}</div>}
+              </div>
+              <div className="grid-3">
+                <div className="input-group">
+                  <input value={line.d1l||"Units"} onChange={e=>upd(idx,"d1l",e.target.value)}
+                    style={{border:"none",background:"none",fontWeight:600,fontSize:11,color:"var(--text-secondary)",outline:"none",fontFamily:"inherit",marginBottom:5,display:"block"}}/>
+                  <div className="input-wrap"><input className="input-field" type="number" value={line.d1||""} onChange={e=>upd(idx,"d1",Number(e.target.value)||0)} disabled={!line.on}/></div>
+                </div>
+                <div className="input-group">
+                  <input value={line.d2l||"Price/unit"} onChange={e=>upd(idx,"d2l",e.target.value)}
+                    style={{border:"none",background:"none",fontWeight:600,fontSize:11,color:"var(--text-secondary)",outline:"none",fontFamily:"inherit",marginBottom:5,display:"block"}}/>
+                  <div className="input-wrap"><span className="input-prefix">{sym}</span><input className="input-field has-prefix" type="number" value={line.d2||""} onChange={e=>upd(idx,"d2",Number(e.target.value)||0)} disabled={!line.on}/></div>
+                </div>
+                <Inp label="Annual Growth" value={line.growth??0} onChange={v=>upd(idx,"growth",Number(v)||0)} suf="%" min={-50} max={200} disabled={!line.on}/>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {results.sched.filter(r=>r.revenue>0).length>0&&(
+        <div className="card">
+          <div className="card-header"><div className="t-headline">Revenue Projection</div></div>
+          <div style={{padding:"12px 16px 8px"}}>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={results.sched.filter(r=>r.revenue>0)} margin={{top:5,right:16,left:0,bottom:0}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--sep)" vertical={false}/>
+                <XAxis dataKey="year" tick={{fill:"var(--text-tertiary)",fontSize:11}} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={v=>fmt(v)} tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false} width={60}/>
+                <Tooltip content={<ChartTip/>}/>
+                <Bar dataKey="revenue" name="Revenue" fill="var(--blue)" radius={[4,4,0,0]}/>
+                <Bar dataKey="grossProfit" name="Gross Profit" fill="var(--green)" radius={[4,4,0,0]}/>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══ COSTS TAB ═════════════════════════════════════════════════════════ */
+function CostsTab({inputs,setI,results}){
+  const{fmt,sym}=useFmt();
+  const upd=(idx,k,v)=>{const lines=[...(inputs.costLines||[])];lines[idx]={...lines[idx],[k]:v};setI("costLines",lines);};
+
+  return(
+    <div className="fade-up">
+      <div className="card" style={{marginBottom:14}}>
+        <div className="card-header"><div className="t-headline">Operating Cost Lines</div></div>
+        <div className="card-body">
+          {(inputs.costLines||[]).map((line,idx)=>(
+            <div key={idx} style={{borderBottom:"1px solid var(--sep)",paddingBottom:14,marginBottom:14,opacity:line.on?1:0.45}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                <button className={`toggle${line.on?" on":""}`} onClick={()=>upd(idx,"on",!line.on)}/>
+                <input value={line.name||""} onChange={e=>upd(idx,"name",e.target.value)}
+                  style={{flex:1,border:"1px solid var(--sep)",borderRadius:"var(--r-sm)",padding:"5px 10px",fontSize:14,fontFamily:"inherit",fontWeight:600,color:"var(--text-primary)",background:"var(--fill)",outline:"none"}}/>
+                <label style={{display:"flex",alignItems:"center",gap:5,fontSize:12,cursor:"pointer",color:"var(--text-secondary)",flexShrink:0}}>
+                  <input type="checkbox" checked={!!line.pctRev} onChange={e=>upd(idx,"pctRev",e.target.checked)}/>
+                  % of Revenue
+                </label>
+              </div>
+              <div className="grid-3">
+                {line.pctRev
+                  ? <Inp label="% of Revenue" value={line.pct??""} onChange={v=>upd(idx,"pct",Number(v)||0)} suf="%" min={0} max={100} disabled={!line.on}/>
+                  : <Inp label="Annual Amount (Year 1)" value={line.val??""} onChange={v=>upd(idx,"val",Number(v)||0)} pre={sym} min={0} disabled={!line.on}/>
+                }
+                <Inp label="Annual Growth" value={line.growth??0} onChange={v=>upd(idx,"growth",Number(v)||0)} suf="%" min={-50} max={100} disabled={!line.on||line.pctRev}/>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {results.sched.filter(r=>r.revenue>0).length>0&&(
+        <div className="card">
+          <div className="card-header"><div className="t-headline">Cost Structure</div></div>
+          <div style={{padding:"12px 16px 8px"}}>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={results.sched.filter(r=>r.revenue>0)} margin={{top:5,right:16,left:0,bottom:0}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--sep)" vertical={false}/>
+                <XAxis dataKey="year" tick={{fill:"var(--text-tertiary)",fontSize:11}} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={v=>fmt(v)} tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false} width={60}/>
+                <Tooltip content={<ChartTip/>}/>
+                <Bar dataKey="costs" name="Total Costs" fill="var(--red)" radius={[4,4,0,0]} opacity={0.8}/>
+                <Bar dataKey="ebitda" name="EBITDA" fill="var(--green)" radius={[4,4,0,0]}/>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══ WORKING CAPITAL TAB ═══════════════════════════════════════════════ */
+function WCTab({inputs,setI,results}){
+  const{fmt}=useFmt();
+  const opsY=clamp(inputs.constructionYears,0,5);
+  const wcSched=results.sched.map((r,i)=>{
+    const rec=r.revenue*clamp(inputs.receivDays,0,365)/365;
+    const pay=r.costs*clamp(inputs.payablDays,0,365)/365;
+    const inv=r.costs*clamp(inputs.inventDays,0,365)/365;
+    const wc=rec+inv-pay;
+    const prevR=results.sched[i-1];
+    const prevWC=prevR?(prevR.revenue*clamp(inputs.receivDays,0,365)/365+prevR.costs*clamp(inputs.inventDays,0,365)/365-prevR.costs*clamp(inputs.payablDays,0,365)/365):0;
+    return{year:r.year,phase:r.phase,rec:Math.round(rec),pay:Math.round(pay),inv:Math.round(inv),wc:Math.round(wc),dwc:Math.round(wc-prevWC)};
+  });
+
+  return(
+    <div className="fade-up">
+      <div className="info-banner info-blue" style={{marginBottom:16}}>
+        <span>💡</span><span>Working capital = Receivables + Inventory − Payables. Changes in WC reduce free cash flow in years of growth.</span>
+      </div>
+      <div className="grid-3" style={{marginBottom:14}}>
+        {[
+          {l:"Receivables Days",k:"receivDays",icon:"📥",desc:"Customer payment delay"},
+          {l:"Payables Days",k:"payablDays",icon:"📤",desc:"Supplier payment delay"},
+          {l:"Inventory Days",k:"inventDays",icon:"📦",desc:"Stock holding period"},
+        ].map(f=>(
+          <div className="card" key={f.k}>
+            <div className="card-header"><div className="t-headline">{f.icon} {f.l}</div></div>
+            <div className="card-body">
+              <div style={{fontSize:12,color:"var(--text-tertiary)",marginBottom:10}}>{f.desc}</div>
+              <Inp value={inputs[f.k]??30} onChange={v=>setI(f.k,v)} suf="days" min={0} max={365}/>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="card">
+        <div className="card-header"><div className="t-headline">Working Capital Schedule</div></div>
+        <table className="data-table">
+          <thead><tr><th>Year</th><th>Phase</th><th>Receivables</th><th>Inventory</th><th>Payables</th><th>Net WC</th><th>ΔWC (FCF impact)</th></tr></thead>
+          <tbody>
+            {wcSched.map(r=>(
+              <tr key={r.year}>
+                <td style={{fontWeight:600}}>{r.year}</td>
+                <td>{r.phase==="Construction"?<span className="phase-c">{r.phase}</span>:<span className="phase-o">{r.phase}</span>}</td>
+                <td style={{color:"var(--blue)"}}>{fmt(r.rec)}</td>
+                <td style={{color:"var(--amber)"}}>{fmt(r.inv)}</td>
+                <td style={{color:"var(--green)"}}>{fmt(r.pay)}</td>
+                <td style={{fontWeight:600}}>{fmt(r.wc)}</td>
+                <td style={{color:r.dwc<0?"var(--green)":r.dwc>0?"var(--red)":"var(--text-tertiary)",fontWeight:600}}>{r.dwc>0?"+":""}{fmt(r.dwc)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+/* ══ RESULTS TAB ═══════════════════════════════════════════════════════ */
+function ResultsTab({inputs,results}){
+  const{fmt}=useFmt();
+  const good=results.npv>0;
+  const{sched}=results;
+
+  return(
+    <div className="fade-up">
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:18}}>
+        {[
+          {l:"NPV (Nominal)",  v:fmt(results.npv),              c:good?"green":"red",     b:good?"badge-green":"badge-red",  bt:good?"✓ Creates Value":"✗ Destroys Value"},
+          {l:"NPV (Real)",     v:fmt(results.npvR),             c:(results.npvR||0)>0?"green":"red"},
+          {l:"IRR",            v:pct(results.irr?results.irr*100:null), c:results.irr&&results.irr>inputs.discountRate/100?"green":"red"},
+          {l:"MIRR",           v:pct(results.mirr?results.mirr*100:null), c:""},
+          {l:"Payback",        v:results.pb>=0?`${results.pb} yrs`:">proj",c:""},
+          {l:"PI",             v:xN(results.pi),                c:results.pi>1?"green":"red"},
+          {l:"RONA",           v:pct((results.rona||0)*100),    c:""},
+          {l:"Total EVA",      v:fmt(results.totalEVA),         c:results.totalEVA>0?"green":"red"},
+        ].map(k=>(
+          <div className="kpi-card" key={k.l}>
+            <div className="kpi-label">{k.l}</div>
+            <div className={`kpi-value t-num ${k.c==="amber"?"amber":k.c}`}>{k.v}</div>
+            {k.b&&<div className={`kpi-badge ${k.b}`}>{k.bt}</div>}
+          </div>
+        ))}
+      </div>
+
+      {results.tv>0&&(
+        <div className="info-banner info-green" style={{marginBottom:14}}>
+          <span>🏁</span>
+          <span>Terminal value ({inputs.tvMethod==="perpetuity"?`perpetuity @ ${inputs.tvGrowth}% growth`:`EV multiple ${inputs.evMult}×`}): <strong>{fmt(results.tv)}</strong> · PV of TV: <strong>{fmt(results.tvPV)}</strong> · TV contribution: <strong>{results.npv>0?pct((results.tvPV/results.npv)*100):"n/a"}</strong></span>
+        </div>
       )}
 
-      {/* Portfolio breakdown */}
-      <div className="acard fade-up" style={{ marginTop:16 }}>
-        <div className="acard-header"><span className="acard-title">Portfolio Breakdown</span></div>
-        <div style={{ padding:"16px 20px" }}>
-          <div style={{ display:"flex", gap:1, height:10, borderRadius:99, overflow:"hidden", marginBottom:12 }}>
-            {[
-              { value: Number(inputs.principal), color:"#6366f1" },
-              { value: totals.totalContrib - Number(inputs.principal), color:"#8b5cf6" },
-              { value: totals.totalInterest, color:"#0d7a55" },
-            ].map((s,i) => {
-              const p = totals.finalBalance > 0 ? (s.value/totals.finalBalance)*100 : 0;
-              return <div key={i} style={{ width:`${p}%`, background:s.color }} />;
-            })}
+      <div className="card" style={{marginBottom:14}}>
+        <div className="card-header"><div className="t-headline">Income Statement Summary</div></div>
+        <div style={{overflowX:"auto"}}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th style={{textAlign:"left"}}>Item</th>
+                {sched.map(r=><th key={r.year}><div>Yr {r.year}</div><div style={{marginTop:2}}>{r.phase==="Construction"?<span className="phase-c">C</span>:<span className="phase-o">O</span>}</div></th>)}
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                {l:"Revenue",      k:"revenue",   c:"var(--blue)"},
+                {l:"Total Costs",  k:"costs",     c:"var(--red)"},
+                {l:"Gross Profit", k:"grossProfit",c:""},
+                {l:"EBITDA",       k:"ebitda",    c:""},
+                {l:"Depreciation", k:"depreciation",c:"var(--text-tertiary)"},
+                {l:"EBIT",         k:"ebit",      c:""},
+                {l:"Interest",     k:"interest",  c:"var(--text-tertiary)"},
+                {l:"Net Income",   k:"netIncome", c:"var(--blue)",bold:true},
+                {l:"FCF",          k:"fcf",       c:"var(--green)",bold:true},
+                {l:"EVA",          k:"eva",       c:"var(--amber)"},
+              ].map(row=>{
+                const tot=sched.reduce((s,r)=>s+(r[row.k]||0),0);
+                return(
+                  <tr key={row.l}>
+                    <td style={{fontWeight:row.bold?700:500}}>{row.l}</td>
+                    {sched.map(r=>(
+                      <td key={r.year} style={{color:(r[row.k]||0)<0?"var(--red)":(row.c||"var(--text-primary)"),fontWeight:row.bold?600:400}}>{fmt(r[row.k]||0)}</td>
+                    ))}
+                    <td style={{fontWeight:700,color:tot<0?"var(--red)":(row.c||"var(--text-primary)")}}>{fmt(tot)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="grid-2">
+        <div className="card">
+          <div className="card-header"><div className="t-headline">Cumulative NPV</div></div>
+          <div style={{padding:"12px 16px 8px"}}>
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={sched} margin={{top:5,right:12,left:0,bottom:0}}>
+                <defs><linearGradient id="gNpv" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="var(--blue)" stopOpacity={0.2}/><stop offset="95%" stopColor="var(--blue)" stopOpacity={0}/></linearGradient></defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--sep)" vertical={false}/>
+                <XAxis dataKey="year" tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={v=>fmt(v)} tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false} width={60}/>
+                <Tooltip content={<ChartTip/>}/>
+                <ReferenceLine y={0} stroke="var(--sep)" strokeDasharray="4 2"/>
+                <Area type="monotone" dataKey="cumNPV" name="Cum. NPV" stroke="var(--blue)" fill="url(#gNpv)" strokeWidth={2.5}/>
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
-          <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
-            {[
-              { label:"Principal",     value:Number(inputs.principal),                           color:"#6366f1" },
-              { label:"Contributions", value:totals.totalContrib - Number(inputs.principal),     color:"#8b5cf6" },
-              { label:"Interest",      value:totals.totalInterest,                               color:"#0d7a55" },
-            ].map(s => (
-              <div key={s.label} style={{ display:"flex", alignItems:"center", gap:5 }}>
-                <div style={{ width:8, height:8, borderRadius:2, background:s.color }} />
-                <span style={{ fontSize:11, color:"var(--ink3)" }}>{s.label}: <strong style={{ color:"var(--ink)" }}>{fmtK(s.value)}</strong></span>
-              </div>
-            ))}
+        </div>
+        <div className="card">
+          <div className="card-header"><div className="t-headline">EVA by Year</div></div>
+          <div style={{padding:"12px 16px 8px"}}>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={sched} margin={{top:5,right:12,left:0,bottom:0}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--sep)" vertical={false}/>
+                <XAxis dataKey="year" tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={v=>fmt(v)} tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false} width={60}/>
+                <Tooltip content={<ChartTip/>}/>
+                <ReferenceLine y={0} stroke="var(--sep)"/>
+                <Bar dataKey="eva" name="EVA" fill="var(--amber)" radius={[4,4,0,0]}/>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
       </div>
@@ -2444,89 +2023,73 @@ function CalcTab({ inputs, setI, totals, schedule }) {
   );
 }
 
-/* ── Scenarios Tab ─────────────────────────────────────────────────── */
-function ScenTab({ inputs, applyScenario, scenario }) {
-  const { fmtK } = useFmt();
-  const results = Object.entries(SCENARIO_PRESETS).map(([name, overrides]) => {
-    const merged = { ...inputs, ...overrides };
-    const { totals } = calcSchedule(merged);
-    return { name, ...overrides, ...totals };
-  });
+/* ══ CASH FLOW TAB ═════════════════════════════════════════════════════ */
+function CashFlowTab({results}){
+  const{fmt}=useFmt();
+  const{sched}=results;
+  let cum=-results.totCapex;
 
-  return (
-    <div>
-      <div className="acard fade-up">
-        <div className="acard-header">
-          <span className="acard-title">Active Scenario</span>
-          <span style={{ fontSize: 12, color: "var(--ink3)" }}>Click a scenario to apply its assumptions</span>
-        </div>
-        <div className="acard-body">
-          <div className="scenario-pills">
-            {["Base","Bull","Bear","Stress"].map(s => {
-              const colors = { Base: "", Bull: "var(--emerald)", Bear: "var(--red)", Stress: "var(--gold)" };
-              return (
-                <button key={s} className={`scenario-pill ${scenario===s?"active":""}`}
-                  onClick={() => applyScenario(s)}
-                  style={scenario===s ? {} : { "--hover-color": colors[s] }}>
-                  {s === "Bull" ? "🐂" : s === "Bear" ? "🐻" : s === "Stress" ? "⚡" : "📊"} {s}
-                </button>
-              );
-            })}
-          </div>
+  return(
+    <div className="fade-up">
+      <div className="grid-3" style={{marginBottom:14}}>
+        {[
+          {l:"Total FCF",    v:fmt(results.totFCF),c:results.totFCF>0?"green":"red"},
+          {l:"Total Revenue",v:fmt(results.totRev),c:""},
+          {l:"Total CAPEX",  v:fmt(results.totCapex),c:"amber"},
+        ].map(k=>(
+          <div className="kpi-card" key={k.l}><div className="kpi-label">{k.l}</div><div className={`kpi-value t-num ${k.c==="amber"?"amber":k.c}`}>{k.v}</div></div>
+        ))}
+      </div>
+      <div className="card" style={{marginBottom:14}}>
+        <div className="card-header"><div className="t-headline">Cash Flow Statement</div></div>
+        <div style={{overflowX:"auto"}}>
+          <table className="data-table">
+            <thead><tr><th>Item</th>{sched.map(r=><th key={r.year}>Yr {r.year}</th>)}<th>Total</th></tr></thead>
+            <tbody>
+              {[
+                {l:"Revenue",           k:"revenue",   neg:false},
+                {l:"Operating Costs",   k:"costs",     neg:true},
+                {l:"EBITDA",            k:"ebitda",    bold:true},
+                {l:"Interest Paid",     k:"interest",  neg:true,c:"var(--text-tertiary)"},
+                {l:"Net Income",        k:"netIncome", bold:true,c:"var(--blue)"},
+                {l:"(+) Depreciation",  k:"depreciation",c:"var(--text-tertiary)"},
+                {l:"(−) CAPEX",         k:"capex",     neg:true,c:"var(--red)"},
+                {l:"(−) ΔWorking Cap",  k:"wcChange",  neg:true,c:"var(--amber)"},
+                {l:"Free Cash Flow",    k:"fcf",       bold:true,c:"var(--green)",total:true},
+              ].map(row=>{
+                const vals=sched.map(r=>row.neg?-(r[row.k]||0):(r[row.k]||0));
+                const tot=vals.reduce((a,b)=>a+b,0);
+                return(
+                  <tr key={row.l} className={row.total?"total-row":""}>
+                    <td style={{fontWeight:row.bold?700:500}}>{row.l}</td>
+                    {vals.map((v,i)=><td key={i} style={{color:v<0?"var(--red)":(row.c||"var(--text-primary)"),fontWeight:row.bold?600:400}}>{fmt(v)}</td>)}
+                    <td style={{fontWeight:700,color:tot<0?"var(--red)":(row.c||"var(--text-primary)")}}>{fmt(tot)}</td>
+                  </tr>
+                );
+              })}
+              <tr>
+                <td style={{fontWeight:700,color:"var(--blue)"}}>Cumulative CF</td>
+                {sched.map(r=>{cum+=r.fcf;return<td key={r.year} style={{fontWeight:600,color:cum>=0?"var(--green)":"var(--red)"}}>{fmt(cum)}</td>;})}
+                <td/>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
-
-      <div className="acard fade-up fade-up-1">
-        <div className="acard-header"><span className="acard-title">Scenario Comparison</span></div>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Scenario</th>
-              <th>Return</th>
-              <th>Monthly</th>
-              <th>WACC</th>
-              <th>Years</th>
-              <th>Final Value</th>
-              <th>NPV</th>
-              <th>IRR</th>
-            </tr>
-          </thead>
-          <tbody>
-            {results.map(r => {
-              const isCurrent = r.name === scenario;
-              return (
-                <tr key={r.name} style={{ background: isCurrent ? "var(--emerald-l)" : "", cursor: "pointer" }}
-                  onClick={() => applyScenario(r.name)}>
-                  <td style={{ fontWeight: 700, color: isCurrent ? "var(--emerald)" : "var(--ink)" }}>
-                    {isCurrent ? "▶ " : ""}{r.name}
-                  </td>
-                  <td>{pct(r.rate)}</td>
-                  <td>{fmtK(r.monthly)}</td>
-                  <td>{pct(r.wacc)}</td>
-                  <td>{r.years}y</td>
-                  <td style={{ fontWeight: 600, color: "var(--emerald)" }}>{fmtK(r.finalBalance)}</td>
-                  <td style={{ color: r.npv >= 0 ? "var(--emerald)" : "var(--red)", fontWeight: 600 }}>{fmtK(r.npv)}</td>
-                  <td style={{ color: r.irr > 0.1 ? "var(--emerald)" : "var(--ink2)" }}>{r.irr ? pct(r.irr*100) : "N/A"}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="acard fade-up fade-up-2">
-        <div className="acard-header"><span className="acard-title">Final Value — Scenario Comparison</span></div>
-        <div style={{ padding: "16px 0 8px" }}>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={results} margin={{ top: 5, right: 20, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e8e3da" />
-              <XAxis dataKey="name" tick={{ fill: "#8a8fa8", fontSize: 12 }} axisLine={false} tickLine={false} />
-              <YAxis tickFormatter={v => fmtK(v)} tick={{ fill: "#8a8fa8", fontSize: 10 }} axisLine={false} tickLine={false} width={60} />
-              <Tooltip content={<ChartTip />} />
-              <Bar dataKey="finalBalance" name="Final Value" radius={[5,5,0,0]}
-                fill="#0d7a55"
-                label={{ position: "top", formatter: v => fmtK(v), fontSize: 11, fill: "#3d4152" }} />
-            </BarChart>
+      <div className="card">
+        <div className="card-header"><div className="t-headline">FCF & Cumulative NPV</div></div>
+        <div style={{padding:"12px 16px 8px"}}>
+          <ResponsiveContainer width="100%" height={220}>
+            <ComposedChart data={sched} margin={{top:5,right:12,left:0,bottom:0}}>
+              <defs><linearGradient id="gCum" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="var(--purple,#5856d6)" stopOpacity={0.2}/><stop offset="95%" stopColor="var(--purple,#5856d6)" stopOpacity={0}/></linearGradient></defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--sep)" vertical={false}/>
+              <XAxis dataKey="year" tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false}/>
+              <YAxis tickFormatter={v=>fmt(v)} tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false} width={60}/>
+              <Tooltip content={<ChartTip/>}/>
+              <ReferenceLine y={0} stroke="var(--sep)" strokeDasharray="4 2"/>
+              <Bar dataKey="fcf" name="Annual FCF" fill="var(--green)" radius={[4,4,0,0]}/>
+              <Area type="monotone" dataKey="cumNPV" name="Cumulative NPV" stroke="#5856d6" fill="url(#gCum)" strokeWidth={2}/>
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
       </div>
@@ -2534,502 +2097,478 @@ function ScenTab({ inputs, applyScenario, scenario }) {
   );
 }
 
-/* ── DCF Tab ─────────────────────────────────────────────────────────── */
-function DCFTab2({ totals, schedule, inputs }) {
-  const { fmtK } = useFmt();
-  const good = totals.npv > 0;
-  return (
-    <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16, marginBottom: 20 }}>
-        {[
-          { label: "NPV", value: fmtK(totals.npv), good: totals.npv > 0, sub: totals.npv>0?"Creates value":"Destroys value" },
-          { label: "IRR", value: totals.irr ? pct(totals.irr*100) : "N/A", good: totals.irr > inputs.wacc/100, sub: `vs WACC ${inputs.wacc}%` },
-          { label: "Payback", value: totals.payback >= 0 ? `${totals.payback+1} yrs` : ">10 yrs", good: totals.payback >= 0 && totals.payback <= 6, sub: "Target < 7 yrs" },
-          { label: "Prof. Index", value: totals.npv > 0 ? ((totals.npv + Number(inputs.principal)) / Number(inputs.principal)).toFixed(2)+"×" : "< 1×", good: totals.npv > 0, sub: totals.npv>0?"Value creating":"Revise plan" },
-        ].map(k => (
-          <div className="kpi-box fade-up" key={k.label}>
-            <div className="kpi-box-label">{k.label}</div>
-            <div className={`kpi-box-value ${k.good?"green":"red"}`}>{k.value}</div>
-            <div className={`kpi-badge ${k.good?"good":"bad"}`}>{k.good?"✓":"✗"} {k.sub}</div>
-          </div>
+/* ══ SENSITIVITY TAB ═══════════════════════════════════════════════════ */
+function SensitivityTab({inputs,results}){
+  const{fmt}=useFmt();
+  const[view,setView]=useState("heatmap");
+  const[beKey,setBeKey]=useState("discountRate");
+
+  const vars=[
+    {key:"discountRate",   label:"WACC",          base:Number(inputs.discountRate),  suf:"%"},
+    {key:"taxRate",        label:"Tax Rate",       base:Number(inputs.taxRate),       suf:"%"},
+    {key:"inflationRate",  label:"Inflation",      base:Number(inputs.inflationRate), suf:"%"},
+    {key:"tvGrowth",       label:"Terminal Growth",base:Number(inputs.tvGrowth||2),   suf:"%"},
+    {key:"intRate",        label:"Interest Rate",  base:Number(inputs.intRate),       suf:"%"},
+    {key:"operationYears", label:"Op. Years",      base:Number(inputs.operationYears), suf:"yr"},
+  ];
+
+  const steps=[-30,-20,-10,0,10,20,30];
+
+  const heatData=vars.map(v=>{
+    const row={label:v.label};
+    steps.forEach(s=>{
+      const nv=v.base*(1+s/100);
+      const npv=calcFinancials({...DEF,...inputs,[v.key]:nv}).npv;
+      row[`s${s}`]=Math.round(npv);
+    });
+    return row;
+  });
+
+  const allVals=heatData.flatMap(r=>steps.map(s=>r[`s${s}`]));
+  const hMin=Math.min(...allVals.filter(isFinite));
+  const hMax=Math.max(...allVals.filter(isFinite));
+
+  const tornado=vars.map(v=>{
+    const lo=calcFinancials({...DEF,...inputs,[v.key]:v.base*0.8}).npv;
+    const hi=calcFinancials({...DEF,...inputs,[v.key]:v.base*1.2}).npv;
+    return{label:v.label,lo:Math.min(lo,hi),hi:Math.max(lo,hi),impact:Math.abs(hi-lo)};
+  }).sort((a,b)=>b.impact-a.impact);
+
+  const beResult=useMemo(()=>doBreakEven({...DEF,...inputs},beKey),[inputs,beKey]);
+  const beVar=vars.find(v=>v.key===beKey)||vars[0];
+
+  const hBg=(v,mn,mx)=>{if(!isFinite(v)) return"var(--fill)";const t=mx===mn?0.5:(v-mn)/(mx-mn);if(t<0.5) return`rgba(255,59,48,${0.08+t*0.3})`;return`rgba(52,199,89,${0.05+(t-0.5)*0.5})`;};
+  const hFg=(v,mn,mx)=>{if(!isFinite(v)) return"var(--text-tertiary)";const t=mx===mn?0.5:(v-mn)/(mx-mn);return t<0.3?"var(--red)":t>0.7?"var(--green)":"var(--text-primary)";};
+
+  return(
+    <div className="fade-up">
+      <div className="pill-tabs">
+        {[["heatmap","Heat Map"],["tornado","Tornado"],["breakeven","Break-Even"]].map(([id,l])=>(
+          <button key={id} className={`pill-tab${view===id?" active":""}`} onClick={()=>setView(id)}>{l}</button>
         ))}
       </div>
 
-      <div className="acard fade-up fade-up-1">
-        <div className="acard-header">
-          <span className="acard-title">DCF Schedule</span>
-          <span className="acard-sub">WACC: {inputs.wacc}% · Tax: {inputs.tax}%</span>
-        </div>
-        <table className="data-table">
-          <thead>
-            <tr><th>Year</th><th>FCF</th><th>Discount Factor</th><th>PV of FCF</th><th>Cumulative NPV</th></tr>
-          </thead>
-          <tbody>
-            {schedule.map(r => {
-              const df = 1/Math.pow(1+Number(inputs.wacc)/100, r.year);
-              return (
-                <tr key={r.year}>
-                  <td>{r.year}</td>
-                  <td style={{ color: r.fcf >= 0 ? "var(--emerald)" : "var(--red)" }}>{fmtK(r.fcf)}</td>
-                  <td style={{ color: "var(--ink3)" }}>{df.toFixed(4)}</td>
-                  <td>{fmtK(Math.round(r.fcf*df))}</td>
-                  <td style={{ color: r.cumNPV >= 0 ? "var(--emerald)" : "var(--red)", fontWeight: 600 }}>{fmtK(r.cumNPV)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-/* ── Schedule Tab ─────────────────────────────────────────────────────── */
-function SchedTab2({ schedule }) {
-  const { fmtK } = useFmt();
-  return (
-    <div className="acard fade-up">
-      <div className="acard-header">
-        <span className="acard-title">Year-by-Year Schedule</span>
-        <span className="acard-sub">{schedule.length} projection years</span>
-      </div>
-      <table className="data-table">
-        <thead>
-          <tr><th>Year</th><th>Balance</th><th>Contributed</th><th>Interest Earned</th><th>Year Growth</th><th>Inflation Adj.</th></tr>
-        </thead>
-        <tbody>
-          {schedule.map(r => (
-            <tr key={r.year}>
-              <td style={{ color: "var(--emerald)", fontWeight: 700 }}>{r.year}</td>
-              <td style={{ fontWeight: 600 }}>{fmtK(r.balance)}</td>
-              <td style={{ color: "var(--ink2)" }}>{fmtK(r.contributions)}</td>
-              <td style={{ color: "var(--emerald)" }}>+{fmtK(r.interest)}</td>
-              <td style={{ color: "var(--emerald)" }}>+{fmtK(r.yearGrowth)}</td>
-              <td style={{ color: "var(--ink3)" }}>{fmtK(r.inflationAdj)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-/* ── Sensitivity Tab ─────────────────────────────────────────────────── */
-function SensTab2({ inputs }) {
-  const { fmtK, symbol } = useFmt();
-  const [sensView, setSensView] = useState("heatmap");
-  const [rowV, setRowV] = useState("rate");
-  const [colV, setColV] = useState("wacc");
-
-  const varDefs = { rate: "Return %", wacc: "WACC %", years: "Years", monthly: "Monthly $" };
-  const getSteps = (k) => {
-    const b = Number(inputs[k]);
-    if (k==="rate")    return [-3,-2,-1,0,1,2,3].map(d => Math.max(0.5,b+d));
-    if (k==="wacc")    return [-3,-2,-1,0,1,2,3].map(d => Math.max(1,b+d));
-    if (k==="years")   return [-8,-5,-3,0,3,5,8].map(d => Math.max(1,Math.round(b+d)));
-    if (k==="monthly") return [-300,-200,-100,0,100,200,300].map(d => Math.max(0,b+d));
-  };
-  const fmtS = (k,v) => k==="rate"||k==="wacc" ? `${v}%` : k==="years" ? `${v}y` : `$${v}`;
-
-  const rs = getSteps(rowV), cs = getSteps(colV);
-  const calcNPV = (overrides) => {
-    const { totals } = calcSchedule({ ...inputs, ...overrides });
-    return totals.npv;
-  };
-
-  const grid = useMemo(() => rs.map(rv => cs.map(cv => {
-    const ov = {};
-    ov[rowV] = rv; ov[colV] = cv;
-    return calcNPV(ov);
-  })), [rowV, colV, inputs]);
-
-  const allV = grid.flat(), minV = Math.min(...allV), maxV = Math.max(...allV);
-  const baseNPV = calcNPV({});
-
-  const tornado = Object.keys(varDefs).map(k => {
-    const vals = getSteps(k).map(sv => { const ov = {}; ov[k]=sv; return calcNPV(ov); });
-    return { key: k, label: varDefs[k], low: Math.min(...vals), high: Math.max(...vals) };
-  }).sort((a,b) => (b.high-b.low)-(a.high-a.low));
-  const tMax = Math.max(...tornado.map(s => Math.max(Math.abs(s.high-baseNPV), Math.abs(s.low-baseNPV))));
-
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-        {[["heatmap","Heat Map"],["tornado","Tornado Chart"],["breakeven","Break-Even"]].map(([id,lbl]) => (
-          <button key={id} onClick={() => setSensView(id)}
-            style={{ padding: "8px 18px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer",
-              background: sensView===id ? "var(--emerald)" : "var(--card)",
-              color: sensView===id ? "#fff" : "var(--ink2)",
-              border: sensView===id ? "1.5px solid var(--emerald)" : "1.5px solid var(--border)",
-              fontFamily: "var(--sans)", transition: "all 0.15s" }}>
-            {lbl}
-          </button>
-        ))}
-      </div>
-
-      {sensView === "heatmap" && (
-        <div className="acard fade-up">
-          <div className="acard-header">
-            <span className="acard-title">NPV Sensitivity — Heat Map</span>
-            <div style={{ display: "flex", gap: 8 }}>
-              {[["Row", rowV, setRowV, colV],["Col", colV, setColV, rowV]].map(([lbl, val, setter, excl]) => (
-                <div key={lbl} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ fontSize: 11, color: "var(--ink3)" }}>{lbl}:</span>
-                  <select value={val} onChange={e => { if(e.target.value!==excl) setter(e.target.value); }}
-                    style={{ fontSize: 12, border: "1px solid var(--border)", borderRadius: 4, padding: "2px 6px", background: "var(--cream)", fontFamily: "var(--sans)" }}>
-                    {Object.entries(varDefs).filter(([k]) => k!==excl).map(([k,l]) => <option key={k} value={k}>{l}</option>)}
-                  </select>
-                </div>
-              ))}
-            </div>
+      {view==="heatmap"&&(
+        <div className="card">
+          <div className="card-header">
+            <div className="t-headline">NPV Sensitivity — % change from base inputs</div>
+            <div className="t-footnote">Green = higher NPV · Red = lower NPV · Bold = base case</div>
           </div>
-          <div className="acard-body">
-            <div className="heat-wrap">
-              <table className="heat-table">
-                <thead>
-                  <tr>
-                    <th>↓{varDefs[rowV].split(" ")[0]} \ {varDefs[colV].split(" ")[0]}→</th>
-                    {cs.map((c,i) => <th key={i}>{fmtS(colV,c)}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rs.map((r,ri) => (
-                    <tr key={ri}>
-                      <th style={{ background: "var(--cream2)", color: "var(--ink2)" }}>{fmtS(rowV,r)}</th>
-                      {cs.map((c,ci) => {
-                        const val = grid[ri][ci];
-                        const isBase = Math.abs(r-Number(inputs[rowV]))<0.01 && Math.abs(c-Number(inputs[colV]))<0.01;
-                        const diff = val - baseNPV;
-                        return (
-                          <td key={ci} style={{ background: heatBg(val,minV,maxV), color: heatColor(val,minV,maxV) }}
-                            className={isBase ? "heat-base-cell" : ""}>
-                            <div style={{ fontWeight: isBase ? 700 : 400 }}>{fmtK(val)}</div>
-                            {!isBase && <div style={{ fontSize: 10, opacity: 0.75 }}>{diff>=0?"+":""}{fmtK(diff)}</div>}
-                            {isBase && <div style={{ fontSize: 10, color: "var(--emerald)", fontWeight: 700 }}>◀ BASE</div>}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12 }}>
-              <span style={{ fontSize: 11, color: "var(--ink3)" }}>Low NPV</span>
-              {[0,.25,.5,.75,1].map(t => <div key={t} style={{ width: 22, height: 10, borderRadius: 2, background: heatBg(t,0,1) }} />)}
-              <span style={{ fontSize: 11, color: "var(--ink3)" }}>High NPV</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {sensView === "tornado" && (
-        <div className="acard fade-up">
-          <div className="acard-header">
-            <span className="acard-title">Tornado Chart — Impact on NPV</span>
-            <span className="acard-sub">Base NPV: {fmtK(baseNPV)}</span>
-          </div>
-          <div className="acard-body" style={{ paddingTop: 24 }}>
-            {tornado.map(s => {
-              const lp = tMax > 0 ? ((baseNPV-s.low)/tMax)*45 : 0;
-              const hp = tMax > 0 ? ((s.high-baseNPV)/tMax)*45 : 0;
-              return (
-                <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                  <div style={{ width: 120, textAlign: "right", fontSize: 12, color: "var(--ink2)", fontWeight: 500 }}>{s.label}</div>
-                  <div style={{ flex: 1, position: "relative", height: 28, display: "flex", alignItems: "center" }}>
-                    <div style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "var(--border)" }} />
-                    <div style={{ position: "absolute", right: "50%", width: `${lp}%`, height: 18, background: "var(--red)", opacity: 0.7, borderRadius: "3px 0 0 3px" }} />
-                    <div style={{ position: "absolute", left: "50%", width: `${hp}%`, height: 18, background: "var(--emerald)", opacity: 0.7, borderRadius: "0 3px 3px 0" }} />
-                  </div>
-                  <div style={{ width: 140, fontSize: 11, color: "var(--ink2)" }}>
-                    <span style={{ color: "var(--red)" }}>{fmtK(s.low-baseNPV)}</span>
-                    {" / "}
-                    <span style={{ color: "var(--emerald)" }}>+{fmtK(s.high-baseNPV)}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {sensView === "breakeven" && (() => {
-        const { totals: beT } = calcSchedule(inputs);
-        const beNPV = beT.npv;
-        const beRows = [
-          {
-            label: "IRR (= Break-even WACC)",
-            value: beT.irr != null ? pct(beT.irr * 100) : "N/A",
-            note: "If your WACC exceeds this, NPV turns negative",
-          },
-          {
-            label: "Payback Period",
-            value: beT.payback >= 0 ? `${beT.payback + 1} years` : "> projection period",
-            note: "Years until cumulative FCF recovers the initial investment",
-          },
-          {
-            label: `NPV sensitivity — WACC ±1%`,
-            value: (() => {
-              const lo = calcSchedule({ ...inputs, wacc: Math.max(0.5, Number(inputs.wacc) - 1) }).totals.npv;
-              const hi = calcSchedule({ ...inputs, wacc: Number(inputs.wacc) + 1 }).totals.npv;
-              const loD = lo - beNPV, hiD = hi - beNPV;
-              return `${loD >= 0 ? "+" : ""}${fmtK(loD)}  /  ${hiD >= 0 ? "+" : ""}${fmtK(hiD)}`;
-            })(),
-            note: "NPV change when WACC drops 1% (left) or rises 1% (right)",
-          },
-          {
-            label: `NPV sensitivity — Return ±1%`,
-            value: (() => {
-              const lo = calcSchedule({ ...inputs, rate: Math.max(0.5, Number(inputs.rate) - 1) }).totals.npv;
-              const hi = calcSchedule({ ...inputs, rate: Number(inputs.rate) + 1 }).totals.npv;
-              const loD = lo - beNPV, hiD = hi - beNPV;
-              return `${loD >= 0 ? "+" : ""}${fmtK(loD)}  /  +${fmtK(hiD)}`;
-            })(),
-            note: "NPV change when return drops 1% (left) or rises 1% (right)",
-          },
-          {
-            label: `Break-even monthly (to reach ${symbol}1M)`,
-            value: (() => {
-              for (let m = 0; m <= 10000; m += 50) {
-                if (calcSchedule({ ...inputs, monthly: m }).totals.finalBalance >= 1_000_000)
-                  return fmtK(m) + " /mo";
-              }
-              return `> ${symbol}10,000 /mo`;
-            })(),
-            note: "Minimum monthly contribution to hit 1 million by end of horizon",
-          },
-          {
-            label: "Break-even time horizon (NPV = 0)",
-            value: (() => {
-              for (let y = 1; y <= 50; y++) {
-                if (calcSchedule({ ...inputs, years: y }).totals.npv >= 0) return `${y} years`;
-              }
-              return "> 50 years";
-            })(),
-            note: "Minimum years needed for this investment to break even on NPV",
-          },
-          {
-            label: "Profitability Index",
-            value: Number(inputs.principal) > 0
-              ? ((beNPV + Number(inputs.principal)) / Number(inputs.principal)).toFixed(2) + "×"
-              : "N/A",
-            note: "PI > 1.0 means value is created. PI < 1.0 means value is destroyed.",
-          },
-        ];
-        return (
-          <div className="acard fade-up">
-            <div className="acard-header">
-              <span className="acard-title">Break-Even Analysis</span>
-              <span className="acard-sub">Base NPV: {fmtK(beNPV)}</span>
-            </div>
-            <table className="data-table">
+          <div style={{overflowX:"auto",padding:16}}>
+            <table style={{borderCollapse:"collapse",fontSize:12,width:"100%"}}>
               <thead>
-                <tr><th>Metric</th><th>Value</th><th>Interpretation</th></tr>
+                <tr>
+                  <th style={{padding:"8px 12px",textAlign:"left",background:"var(--fill)",fontWeight:600,fontSize:11,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.3px",borderBottom:"1px solid var(--sep)"}}>Variable</th>
+                  {steps.map(s=><th key={s} style={{padding:"8px 10px",textAlign:"center",background:"var(--fill)",fontWeight:600,fontSize:11,color:"var(--text-tertiary)",borderBottom:"1px solid var(--sep)",minWidth:80}}>{s>0?"+":""}{s}%</th>)}
+                </tr>
               </thead>
               <tbody>
-                {beRows.map(r => (
-                  <tr key={r.label}>
-                    <td style={{ fontWeight: 500 }}>{r.label}</td>
-                    <td style={{ color: "var(--emerald)", fontWeight: 700 }}>{r.value}</td>
-                    <td style={{ color: "var(--ink3)", fontSize: 12 }}>{r.note}</td>
+                {heatData.map(row=>(
+                  <tr key={row.label}>
+                    <td style={{padding:"7px 12px",fontWeight:600,fontSize:12,borderBottom:"1px solid var(--sep)",color:"var(--text-secondary)",whiteSpace:"nowrap"}}>{row.label}</td>
+                    {steps.map(s=>(
+                      <td key={s} style={{padding:"6px 8px",borderBottom:"1px solid var(--sep)",textAlign:"center",background:hBg(row[`s${s}`],hMin,hMax),color:hFg(row[`s${s}`],hMin,hMax),fontWeight:s===0?700:500,border:s===0?"2px solid var(--blue)":"",borderRadius:s===0?4:0,fontVariantNumeric:"tabular-nums"}}>
+                        {fmt(row[`s${s}`])}
+                      </td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        );
-      })()}
-    </div>
-  );
-}
-
-/* ── Charts Tab ───────────────────────────────────────────────────────── */
-function ChartsTab2({ schedule }) {
-  const { fmtK } = useFmt();
-  const [chartV, setChartV] = useState("growth");
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-        {[["growth","Growth"],["fcf","Free Cash Flow"],["breakdown","Breakdown"],["npv","NPV Curve"]].map(([id,lbl]) => (
-          <button key={id} onClick={() => setChartV(id)}
-            style={{ padding: "8px 16px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer",
-              background: chartV===id ? "var(--emerald)" : "var(--card)",
-              color: chartV===id ? "#fff" : "var(--ink2)",
-              border: chartV===id ? "1.5px solid var(--emerald)" : "1.5px solid var(--border)",
-              fontFamily: "var(--sans)", transition: "all 0.15s" }}>
-            {lbl}
-          </button>
-        ))}
-      </div>
-      <div className="acard fade-up">
-        <div className="acard-header">
-          <span className="acard-title">
-            {chartV==="growth" ? "Portfolio Growth Over Time" : chartV==="fcf" ? "Annual Free Cash Flow" : chartV==="breakdown" ? "Contributions vs Interest" : "Cumulative NPV Curve"}
-          </span>
         </div>
-        <div style={{ padding: "16px 0 12px" }}>
-          <ResponsiveContainer width="100%" height={280}>
-            {chartV === "growth" ? (
-              <AreaChart data={schedule} margin={{ top: 5, right: 24, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0d7a55" stopOpacity={0.2}/><stop offset="95%" stopColor="#0d7a55" stopOpacity={0}/></linearGradient>
-                  <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#6366f1" stopOpacity={0.15}/><stop offset="95%" stopColor="#6366f1" stopOpacity={0}/></linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e8e3da" />
-                <XAxis dataKey="year" tick={{ fill: "#8a8fa8", fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={v => fmtK(v)} tick={{ fill: "#8a8fa8", fontSize: 10 }} axisLine={false} tickLine={false} width={60} />
-                <Tooltip content={<ChartTip />} />
-                <Area type="monotone" dataKey="contributions" name="Contributed" stroke="#6366f1" fill="url(#g2)" strokeWidth={1.5} />
-                <Area type="monotone" dataKey="balance" name="Balance" stroke="#0d7a55" fill="url(#g1)" strokeWidth={2.5} />
-              </AreaChart>
-            ) : chartV === "fcf" ? (
-              <BarChart data={schedule} margin={{ top: 5, right: 24, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e8e3da" />
-                <XAxis dataKey="year" tick={{ fill: "#8a8fa8", fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={v => fmtK(v)} tick={{ fill: "#8a8fa8", fontSize: 10 }} axisLine={false} tickLine={false} width={60} />
-                <Tooltip content={<ChartTip />} />
-                <ReferenceLine y={0} stroke="#d1d5db" />
-                <Bar dataKey="fcf" name="FCF" fill="#0d7a55" radius={[3,3,0,0]} />
-              </BarChart>
-            ) : chartV === "breakdown" ? (
-              <BarChart data={schedule} margin={{ top: 5, right: 24, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e8e3da" />
-                <XAxis dataKey="year" tick={{ fill: "#8a8fa8", fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={v => fmtK(v)} tick={{ fill: "#8a8fa8", fontSize: 10 }} axisLine={false} tickLine={false} width={60} />
-                <Tooltip content={<ChartTip />} />
-                <Bar dataKey="contributions" name="Contributions" stackId="a" fill="#6366f1" />
-                <Bar dataKey="interest" name="Interest" stackId="a" fill="#0d7a55" radius={[3,3,0,0]} />
-              </BarChart>
-            ) : (
-              <AreaChart data={schedule} margin={{ top: 5, right: 24, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="gN" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0d7a55" stopOpacity={0.2}/><stop offset="95%" stopColor="#0d7a55" stopOpacity={0}/></linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e8e3da" />
-                <XAxis dataKey="year" tick={{ fill: "#8a8fa8", fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={v => fmtK(v)} tick={{ fill: "#8a8fa8", fontSize: 10 }} axisLine={false} tickLine={false} width={60} />
-                <Tooltip content={<ChartTip />} />
-                <ReferenceLine y={0} stroke="#d1d5db" strokeDasharray="4 2" />
-                <Area type="monotone" dataKey="cumNPV" name="Cumulative NPV" stroke="#0d7a55" fill="url(#gN)" strokeWidth={2.5} dot={false} />
-              </AreaChart>
-            )}
-          </ResponsiveContainer>
-        </div>
-      </div>
-    </div>
-  );
-}
+      )}
 
-/* ══════════════════════════════════════════════════════════════════════
-   PROFILE PAGE
-══════════════════════════════════════════════════════════════════════ */
-function ProfilePage({ session, onBack, onLogout }) {
-  const user = session?.user || {};
-  const initials = user.name?.split(" ").map(w => w[0]).join("").toUpperCase().slice(0,2) || "U";
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPw,   setConfirmPw]   = useState("");
-  const [showPw,      setShowPw]      = useState(false);
-  const [pwLoading,   setPwLoading]   = useState(false);
-  const [pwSuccess,   setPwSuccess]   = useState(false);
-  const [pwError,     setPwError]     = useState("");
-
-  const handleChangePassword = async () => {
-    setPwError(""); setPwSuccess(false);
-    if (newPassword.length < 6) { setPwError("Password must be at least 6 characters."); return; }
-    if (newPassword !== confirmPw) { setPwError("Passwords do not match."); return; }
-    setPwLoading(true);
-    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", "apikey": SUPABASE_ANON_KEY, "Authorization": `Bearer ${session.access_token}` },
-      body: JSON.stringify({ password: newPassword }),
-    });
-    const data = await r.json();
-    setPwLoading(false);
-    if (data.error) { setPwError(data.error.message || "Failed to update password."); }
-    else { setPwSuccess(true); setNewPassword(""); setConfirmPw(""); }
-  };
-
-  return (
-    <div style={{ minHeight:"100vh", background:"var(--cream)", fontFamily:"var(--sans)" }}>
-      <div style={{ background:"#fff", borderBottom:"1px solid var(--border)", height:64, display:"flex", alignItems:"center", padding:"0 32px", gap:16, position:"sticky", top:0, zIndex:50 }}>
-        <button onClick={onBack} style={{ display:"flex", alignItems:"center", gap:6, background:"none", border:"none", cursor:"pointer", color:"var(--ink2)", fontSize:14, fontFamily:"var(--sans)" }}>← Back</button>
-        <div style={{ fontFamily:"var(--serif)", fontSize:18, color:"var(--ink)" }}>Capital<span style={{ color:"var(--emerald)" }}>IQ</span></div>
-        <div style={{ fontSize:14, color:"var(--ink3)", marginLeft:8 }}>/ My Profile</div>
-      </div>
-
-      <div style={{ maxWidth:680, margin:"0 auto", padding:"40px 24px" }}>
-
-        <div className="acard fade-up" style={{ marginBottom:20 }}>
-          <div style={{ padding:"28px", display:"flex", alignItems:"center", gap:20 }}>
-            <div style={{ width:64, height:64, borderRadius:"50%", background:"var(--emerald-l)", border:"2px solid var(--emerald)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, fontWeight:700, color:"var(--emerald)", flexShrink:0 }}>{initials}</div>
-            <div>
-              <div style={{ fontFamily:"var(--serif)", fontSize:22, color:"var(--ink)", marginBottom:2 }}>{user.name || "My Account"}</div>
-              <div style={{ fontSize:13, color:"var(--ink3)" }}>{user.email}</div>
-              <span style={{ display:"inline-block", marginTop:6, fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:3, background:"var(--emerald-l)", color:"var(--emerald)", textTransform:"uppercase", letterSpacing:"0.5px" }}>Free Plan</span>
-            </div>
+      {view==="tornado"&&(
+        <div className="card">
+          <div className="card-header">
+            <div className="t-headline">Tornado Chart — NPV impact of ±20% change</div>
+            <div className="t-footnote">Sorted by impact magnitude</div>
+          </div>
+          <div className="card-body">
+            {tornado.map(item=>{
+              const range=Math.max(hMax-hMin,1);
+              const loW=Math.min(((results.npv-item.lo)/range)*50,48);
+              const hiW=Math.min(((item.hi-results.npv)/range)*50,48);
+              return(
+                <div key={item.label} style={{marginBottom:14}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                    <span style={{fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>{item.label}</span>
+                    <span style={{fontSize:11,color:"var(--text-tertiary)"}}>{fmt(item.lo)} → {fmt(item.hi)} <strong style={{color:"var(--amber)"}}>Δ{fmt(item.impact)}</strong></span>
+                  </div>
+                  <div style={{display:"flex",height:28,borderRadius:6,overflow:"hidden",background:"var(--fill)",alignItems:"stretch"}}>
+                    <div style={{flex:1,display:"flex",justifyContent:"flex-end"}}>
+                      <div style={{width:`${loW}%`,background:"var(--red)",opacity:0.7,transition:"width 0.4s",borderRadius:"4px 0 0 4px"}}/>
+                    </div>
+                    <div style={{width:2,background:"var(--sep)"}}/>
+                    <div style={{flex:1}}>
+                      <div style={{width:`${hiW}%`,height:"100%",background:"var(--green)",opacity:0.7,transition:"width 0.4s",borderRadius:"0 4px 4px 0"}}/>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
+      )}
 
-        <div className="acard fade-up fade-up-1" style={{ marginBottom:20 }}>
-          <div className="acard-header"><span className="acard-title">Account Details</span></div>
-          <div className="acard-body" style={{ padding:0 }}>
-            {[
-              { label:"Full Name",    value: user.name  || "—" },
-              { label:"Email",        value: user.email || "—" },
-              { label:"Account Type", value: "Email & Password" },
-              { label:"Plan",         value: "Free" },
-            ].map((r, i, arr) => (
-              <div key={r.label} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 20px", borderBottom: i < arr.length-1 ? "1px solid var(--border)" : "none" }}>
-                <span style={{ fontSize:13, color:"var(--ink3)", fontWeight:500 }}>{r.label}</span>
-                <span style={{ fontSize:13, color:"var(--ink)", fontWeight:500 }}>{r.value}</span>
+      {view==="breakeven"&&(
+        <div className="card">
+          <div className="card-header"><div className="t-headline">Break-Even Finder</div></div>
+          <div className="card-body">
+            <div style={{marginBottom:16}}>
+              <label className="input-label" style={{marginBottom:8,display:"block"}}>Find break-even value for:</label>
+              <select className="select-field" style={{maxWidth:280}} value={beKey} onChange={e=>setBeKey(e.target.value)}>
+                {vars.map(v=><option key={v.key} value={v.key}>{v.label}</option>)}
+              </select>
+            </div>
+            {beResult!==null?(
+              <>
+                <div style={{background:"var(--green-bg)",border:"1px solid var(--green)",borderRadius:"var(--r-lg)",padding:"20px 24px",marginBottom:16}}>
+                  <div className="t-footnote" style={{marginBottom:4,color:"var(--green)"}}>Break-Even {beVar.label}</div>
+                  <div style={{fontSize:36,fontWeight:800,color:"var(--green)",letterSpacing:"-1px",fontVariantNumeric:"tabular-nums"}}>{beResult.toFixed(2)}{beVar.suf}</div>
+                  <div style={{fontSize:13,color:"var(--text-secondary)",marginTop:6}}>
+                    At this value NPV = 0 · Current: <strong>{beVar.base.toFixed(2)}{beVar.suf}</strong>
+                    {" · "}Change needed: <strong style={{color:beResult>beVar.base?"var(--red)":"var(--green)"}}>{(beResult-beVar.base)>0?"+":""}{(beResult-beVar.base).toFixed(2)}{beVar.suf}</strong>
+                  </div>
+                </div>
+                {(()=>{
+                  const pts=Array.from({length:21},(_,i)=>{
+                    const v=beVar.base*(0.5+i*0.05);
+                    const npv=calcFinancials({...DEF,...inputs,[beKey]:v}).npv;
+                    return{value:Math.round(v*100)/100,npv:Math.round(npv)};
+                  });
+                  return(
+                    <ResponsiveContainer width="100%" height={200}>
+                      <LineChart data={pts} margin={{top:5,right:12,left:0,bottom:0}}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--sep)" vertical={false}/>
+                        <XAxis dataKey="value" tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false}/>
+                        <YAxis tickFormatter={v=>fmt(v)} tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false} width={60}/>
+                        <Tooltip formatter={(v,n)=>[fmt(v),n]} labelFormatter={v=>`${beVar.label}: ${v}${beVar.suf}`}/>
+                        <ReferenceLine y={0} stroke="var(--red)" strokeDasharray="5 3"/>
+                        {beResult&&<ReferenceLine x={Math.round(beResult*100)/100} stroke="var(--green)" strokeDasharray="5 3"/>}
+                        <Line type="monotone" dataKey="npv" stroke="var(--blue)" strokeWidth={2.5} dot={false} name="NPV"/>
+                      </LineChart>
+                    </ResponsiveContainer>
+                  );
+                })()}
+              </>
+            ):(
+              <div className="info-banner info-orange">
+                <span>⚠️</span><span>No break-even found in feasible range for this variable. The NPV may always be positive or always negative.</span>
               </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══ SCENARIOS TAB ═════════════════════════════════════════════════════ */
+function ScenariosTab({inputs,scenario,applyScenario}){
+  const{fmt}=useFmt();
+
+  const scenResults=Object.entries(SCENARIOS).map(([name,ovr])=>{
+    const merged={...DEF,...inputs,...ovr};
+    const r=calcFinancials(merged);
+    return{name,ovr,r};
+  });
+
+  const metrics=[
+    {l:"WACC",k:"discountRate",suf:"%",src:"ovr"},
+    {l:"Tax Rate",k:"taxRate",suf:"%",src:"ovr"},
+    {l:"Inflation",k:"inflationRate",suf:"%",src:"ovr"},
+    {l:"Op. Years",k:"operationYears",suf:"yr",src:"ovr"},
+    {l:"NPV",k:"npv",fmt:"money",src:"r"},
+    {l:"NPV (Real)",k:"npvR",fmt:"money",src:"r"},
+    {l:"IRR",k:"irr",fmt:"pct100",src:"r"},
+    {l:"MIRR",k:"mirr",fmt:"pct100",src:"r"},
+    {l:"Payback",k:"pb",suf:"yr",src:"r"},
+    {l:"PI",k:"pi",fmt:"x",src:"r"},
+    {l:"RONA",k:"rona",fmt:"pct100",src:"r"},
+  ];
+
+  return(
+    <div className="fade-up">
+      <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+        {Object.keys(SCENARIOS).map(s=>(
+          <button key={s} className={`scenario-btn${scenario===s?" active":""}`} onClick={()=>applyScenario(s)}>{s}</button>
+        ))}
+      </div>
+      <div className="info-banner info-blue" style={{marginBottom:14}}>
+        <span>ℹ️</span><span>Click a scenario to apply it. Current: <strong>{scenario}</strong>. Changes are applied to all tabs.</span>
+      </div>
+
+      <div className="card" style={{marginBottom:14}}>
+        <div className="card-header"><div className="t-headline">Scenario Comparison</div></div>
+        <div style={{overflowX:"auto"}}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th style={{textAlign:"left"}}>Metric</th>
+                {scenResults.map(s=><th key={s.name} style={{color:s.name===scenario?"var(--blue)":"var(--text-tertiary)"}}>{s.name}{s.name===scenario&&<span style={{marginLeft:5,fontSize:9,background:"var(--blue-bg)",color:"var(--blue)",padding:"1px 5px",borderRadius:99,fontWeight:700}}>ACTIVE</span>}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {metrics.map(m=>(
+                <tr key={m.l}>
+                  <td style={{fontWeight:500}}>{m.l}</td>
+                  {scenResults.map(s=>{
+                    const raw=m.src==="r"?s.r[m.k]:(s.ovr[m.k]??inputs[m.k]);
+                    let display,color="var(--text-primary)";
+                    if(m.fmt==="money"){display=fmt(raw||0);color=(raw||0)>=0?"var(--green)":"var(--red)";}
+                    else if(m.fmt==="pct100"){display=pct(raw?raw*100:null);color=(raw||0)>0?"var(--green)":"var(--text-tertiary)";}
+                    else if(m.fmt==="x"){display=xN(raw||0);color=(raw||0)>1?"var(--green)":"var(--red)";}
+                    else display=`${raw??"-"}${m.suf||""}`;
+                    return<td key={s.name} style={{color,fontWeight:s.name===scenario?700:400,fontVariantNumeric:"tabular-nums"}}>{display}</td>;
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="grid-2">
+        <div className="card">
+          <div className="card-header"><div className="t-headline">NPV Comparison</div></div>
+          <div style={{padding:"12px 16px 8px"}}>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={scenResults.map(s=>({name:s.name,npv:s.r.npv}))} margin={{top:5,right:12,left:0,bottom:0}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--sep)" vertical={false}/>
+                <XAxis dataKey="name" tick={{fill:"var(--text-tertiary)",fontSize:11}} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={v=>fmt(v)} tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false} width={60}/>
+                <Tooltip formatter={v=>fmt(v)}/>
+                <ReferenceLine y={0} stroke="var(--sep)"/>
+                <Bar dataKey="npv" name="NPV" fill="var(--blue)" radius={[5,5,0,0]}/>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-header"><div className="t-headline">IRR vs WACC</div></div>
+          <div style={{padding:"12px 16px 8px"}}>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={scenResults.map(s=>({name:s.name,irr:(s.r.irr||0)*100,wacc:s.ovr.discountRate||inputs.discountRate}))} margin={{top:5,right:12,left:0,bottom:0}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--sep)" vertical={false}/>
+                <XAxis dataKey="name" tick={{fill:"var(--text-tertiary)",fontSize:11}} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={v=>`${v.toFixed(0)}%`} tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false} width={36}/>
+                <Tooltip formatter={v=>`${Number(v).toFixed(1)}%`}/>
+                <Bar dataKey="irr" name="IRR" fill="var(--green)" radius={[5,5,0,0]}/>
+                <Bar dataKey="wacc" name="WACC" fill="var(--red)" radius={[5,5,0,0]} opacity={0.6}/>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══ PROPOSAL TAB ══════════════════════════════════════════════════════ */
+function ProposalTab({inputs,results,projName}){
+  const{fmt,code}=useFmt();
+  const today=new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
+  const good=results.npv>0;
+  const opsY=clamp(inputs.constructionYears,0,5);
+
+  const Row=({l,v,h})=>(
+    <div style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:"1px solid var(--sep)"}}>
+      <span style={{fontSize:13,color:"var(--text-secondary)",fontWeight:500}}>{l}</span>
+      <span style={{fontSize:13,fontWeight:h?700:400,color:h?"var(--green)":"var(--text-primary)"}}>{v}</span>
+    </div>
+  );
+
+  return(
+    <div className="fade-up">
+      {/* Header */}
+      <div className="card" style={{marginBottom:14}}>
+        <div style={{background:"linear-gradient(135deg,#1a1a2e 0%,#0f3460 100%)",padding:"28px",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div>
+            <div style={{fontSize:10,color:"rgba(255,255,255,0.4)",fontWeight:700,letterSpacing:"1.5px",textTransform:"uppercase",marginBottom:6}}>Investment Proposal</div>
+            <div style={{fontSize:24,fontWeight:800,color:"#fff",letterSpacing:"-0.5px",marginBottom:4}}>{projName}</div>
+            <div style={{fontSize:12,color:"rgba(255,255,255,0.4)"}}>Prepared by CapitalIQ · {today}</div>
+          </div>
+          <div style={{display:"inline-flex",alignItems:"center",gap:8,background:good?"rgba(52,199,89,0.15)":"rgba(255,59,48,0.15)",padding:"10px 16px",borderRadius:12,border:`1px solid ${good?"var(--green)":"var(--red)"}`}}>
+            <span style={{fontSize:16}}>{good?"✅":"⚠️"}</span>
+            <div><div style={{fontSize:13,fontWeight:700,color:good?"var(--green)":"var(--red)"}}>{good?"RECOMMENDED":"NEEDS REVISION"}</div><div style={{fontSize:11,color:"rgba(255,255,255,0.4)"}}>NPV: {fmt(results.npv)}</div></div>
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",borderTop:"1px solid var(--sep)"}}>
+          {[
+            {l:"NPV",    v:fmt(results.npv),        c:good?"var(--green)":"var(--red)"},
+            {l:"IRR",    v:pct(results.irr?results.irr*100:null), c:"var(--text-primary)"},
+            {l:"Payback",v:results.pb>=0?`${results.pb} yrs`:">proj",c:"var(--text-primary)"},
+            {l:"PI",     v:xN(results.pi),           c:results.pi>1?"var(--green)":"var(--red)"},
+          ].map((k,i)=>(
+            <div key={k.l} style={{padding:"14px 18px",borderRight:i<3?"1px solid var(--sep)":"none"}}>
+              <div className="kpi-label">{k.l}</div>
+              <div style={{fontSize:20,fontWeight:700,color:k.c,fontVariantNumeric:"tabular-nums"}}>{k.v}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {[
+        {n:"01",title:"Executive Summary",content:
+          `This investment proposal analyses the financial viability of "${projName}". The project spans ${opsY>0?`a ${opsY}-year construction phase followed by `:""}a ${clamp(inputs.operationYears,1,30)}-year operation phase.\n\nAt a discount rate (WACC) of ${inputs.discountRate}% and corporate tax rate of ${inputs.taxRate}%, the analysis returns a Net Present Value (NPV) of ${fmt(results.npv)}${Number(inputs.inflationRate)>0?` (real NPV: ${fmt(results.npvR)} after ${inputs.inflationRate}% inflation adjustment using the Fisher equation)`:""}. The IRR is ${pct(results.irr?results.irr*100:null)}, ${results.irr&&results.irr>inputs.discountRate/100?`exceeding the cost of capital by ${((results.irr-inputs.discountRate/100)*100).toFixed(1)} percentage points`:`below the required WACC of ${inputs.discountRate}%`}.\n\n${good?"✅ RECOMMENDATION: PROCEED WITH INVESTMENT":"⚠️ RECOMMENDATION: REVISE AND RESUBMIT"}`
+        },
+        {n:"02",title:"Investment Overview",rows:[
+          {l:"Project Name",v:projName},{l:"Analysis Date",v:today},{l:"Currency",v:code},
+          {l:"Construction Phase",v:`${inputs.constructionYears} year(s)`},{l:"Operation Phase",v:`${inputs.operationYears} year(s)`},
+          {l:"Total CAPEX",v:fmt(results.totCapex)},{l:"Debt Financing",v:fmt(Number(inputs.debtAmt||0))},
+          {l:"WACC / Discount Rate",v:pct(inputs.discountRate)},{l:"Tax Rate",v:pct(inputs.taxRate)},{l:"Inflation Rate",v:pct(inputs.inflationRate)},
+          {l:"Terminal Value",v:inputs.useTv?(inputs.tvMethod==="perpetuity"?`Perpetuity @ ${inputs.tvGrowth}% growth`:`EV Multiple ${inputs.evMult}×`):"Not included"},
+        ]},
+        {n:"03",title:"Financial Results",rows:[
+          {l:"NPV (Nominal)",v:fmt(results.npv),h:true},{l:"NPV (Real)",v:fmt(results.npvR),h:true},
+          {l:"IRR",v:pct(results.irr?results.irr*100:null),h:true},{l:"MIRR",v:pct(results.mirr?results.mirr*100:null)},
+          {l:"Payback Period",v:results.pb>=0?`${results.pb} years`:">projection"},{l:"PI",v:xN(results.pi)},
+          {l:"RONA",v:pct((results.rona||0)*100)},{l:"Total EVA",v:fmt(results.totalEVA)},
+          {l:"Terminal Value",v:fmt(results.tv)},{l:"PV of Terminal Value",v:fmt(results.tvPV)},
+        ]},
+        {n:"04",title:"Risk Assessment",content:
+          `Key risk factors identified:\n\n• WACC Risk: A 1% increase in discount rate would reduce NPV by approximately ${fmt(Math.abs(results.npv*0.08))}.\n• Inflation Risk: At ${inputs.inflationRate}% inflation, real NPV (${fmt(results.npvR)}) is ${fmt(Math.abs(results.npvR-results.npv))} ${results.npvR<results.npv?"lower":"higher"} than nominal.\n• Revenue Risk: A 10% revenue shortfall would materially impact NPV and IRR.\n• Financing Risk: Debt of ${fmt(Number(inputs.debtAmt||0))} at ${inputs.intRate}% requires consistent debt service.\n• Execution Risk: CAPEX overruns of ${fmt(results.totCapex)} base investment would reduce returns.`
+        },
+        {n:"05",title:"Recommendation",content:
+          good
+            ? `✅ RECOMMENDED FOR APPROVAL\n\nNPV of ${fmt(results.npv)} confirms value creation above the cost of capital.\nIRR of ${pct(results.irr?results.irr*100:null)} ${results.irr&&results.irr>inputs.discountRate/100?`exceeds WACC by ${((results.irr-inputs.discountRate/100)*100).toFixed(1)}pp`:""}\nPayback of ${results.pb>=0?`${results.pb} years`:"beyond projection"} is within acceptable range.\nProfitability Index ${xN(results.pi)} indicates efficient capital utilisation.\n\nPROCEED WITH INVESTMENT.`
+            : `⚠️ REVISE AND RESUBMIT\n\nNPV of ${fmt(results.npv)} indicates value destruction at current assumptions.\n\nRecommended actions:\n1. Review revenue assumptions for realism.\n2. Reduce CAPEX or phase investment differently.\n3. Refinance debt to lower interest burden.\n4. Extend operation period to improve return.\n5. Explore tax optimisation opportunities.`
+        },
+      ].map((sec,i)=>(
+        <div className="card fade-up" key={sec.n} style={{marginBottom:10}}>
+          <div className="card-header">
+            <span style={{fontSize:11,color:"var(--text-tertiary)",fontWeight:700,letterSpacing:"0.8px",textTransform:"uppercase"}}>{sec.n} — {sec.title}</span>
+          </div>
+          <div className="card-body">
+            {sec.content&&<div style={{fontSize:13,color:"var(--text-secondary)",lineHeight:1.75,whiteSpace:"pre-line"}}>{sec.content}</div>}
+            {sec.rows&&sec.rows.map(r=><Row key={r.l} l={r.l} v={r.v} h={r.h}/>)}
+          </div>
+        </div>
+      ))}
+      <div style={{textAlign:"center",padding:"16px",fontSize:12,color:"var(--text-tertiary)"}}>
+        💡 Press <strong>Cmd+P</strong> (Mac) or <strong>Ctrl+P</strong> (Windows) → Save as PDF
+      </div>
+    </div>
+  );
+}
+
+/* ══ LANDING PAGE ══════════════════════════════════════════════════════ */
+function LandingPage({onLaunch,onDash}){
+  const FEATS=[
+    {n:"01",t:"Multi-phase DCF",d:"Model a construction phase separately from operations. Each phase has its own cash flow profile and periodisation.",tag:"Core"},
+    {n:"02",t:"Multi-row CAPEX",d:"Up to 5 CAPEX items, each with name, annual payment schedule, and individual straight-line depreciation.",tag:"Core"},
+    {n:"03",t:"Revenue Drivers",d:"Build revenue from components: Driver1 × Driver2 × annual growth. Multiple revenue streams, fully customisable.",tag:"Core"},
+    {n:"04",t:"Working Capital",d:"Enter receivable days, payable days, inventory days. WC and its FCF impact calculated automatically each year.",tag:"New"},
+    {n:"05",t:"Break-Even Finder",d:"Instantly find the WACC, tax rate, inflation or growth rate at which NPV = 0. With sweep chart.",tag:"New"},
+    {n:"06",t:"Terminal Value",d:"Gordon Growth perpetuity or EV/EBITDA multiple. See PV of TV and its contribution to total NPV.",tag:"Pro"},
+    {n:"07",t:"EVA & RONA",d:"Economic Value Added and Return on Net Assets alongside standard metrics. True economic profit visibility.",tag:"Pro"},
+    {n:"08",t:"Real NPV via Fisher",d:"Inflation properly handled using the Fisher equation. Both nominal and real WACC, NPV and IRR shown.",tag:"Pro"},
+    {n:"09",t:"Sensitivity Heatmap",d:"Interactive heat map showing NPV impact of ±30% change across 6 variables. Tornado chart included.",tag:"Analysis"},
+    {n:"10",t:"Scenario Manager",d:"Base, Bull, Bear and Stress scenarios compared side by side with visual NPV and IRR charts.",tag:"Analysis"},
+    {n:"11",t:"Auto Proposal PDF",d:"One-click professional investment proposal: executive summary, financials, risk assessment, recommendation.",tag:"Export"},
+    {n:"12",t:"14 Currencies",d:"Switch between USD, EUR, GBP, CHF, JPY and more. Applied consistently across all calculations.",tag:"Global"},
+  ];
+
+  return(
+    <div style={{fontFamily:"Inter,sans-serif",background:"var(--bg)",minHeight:"100dvh",color:"var(--text-primary)"}}>
+      {/* Nav */}
+      <nav style={{position:"fixed",top:0,left:0,right:0,zIndex:100,background:"var(--surface)",backdropFilter:"saturate(180%) blur(24px)",WebkitBackdropFilter:"saturate(180%) blur(24px)",borderBottom:"1px solid var(--sep)",height:52,display:"flex",alignItems:"center",padding:"0 32px",justifyContent:"space-between"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div className="logo-mark">C</div>
+          <span style={{fontWeight:700,fontSize:17,letterSpacing:"-0.3px"}}>CapitalIQ</span>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          {onDash
+            ?<><button className="btn btn-secondary btn-sm" onClick={onDash}>Dashboard</button><button className="btn btn-primary btn-sm" onClick={onDash}>Go to app →</button></>
+            :<><button className="btn btn-secondary btn-sm" onClick={onLaunch}>Sign in</button><button className="btn btn-primary btn-sm" onClick={onLaunch}>Get started free →</button></>
+          }
+        </div>
+      </nav>
+
+      {/* Hero */}
+      <div style={{paddingTop:100,paddingBottom:80,paddingLeft:32,paddingRight:32,maxWidth:1120,margin:"0 auto",display:"flex",alignItems:"center",gap:64,minHeight:"90dvh"}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{display:"inline-flex",alignItems:"center",gap:6,background:"var(--blue-bg)",color:"var(--blue)",fontSize:12,fontWeight:700,letterSpacing:"0.5px",textTransform:"uppercase",padding:"4px 12px",borderRadius:99,marginBottom:22}}>
+            <span style={{width:6,height:6,borderRadius:"50%",background:"var(--blue)",display:"inline-block"}}/>
+            Professional Investment Analysis
+          </div>
+          <div style={{fontSize:"clamp(38px,5vw,64px)",fontWeight:800,letterSpacing:"-1.5px",lineHeight:1.08,marginBottom:20,color:"var(--text-primary)"}}>Investment appraisal,<br/><span style={{color:"var(--blue)"}}>done properly.</span></div>
+          <div style={{fontSize:17,color:"var(--text-secondary)",lineHeight:1.65,maxWidth:480,marginBottom:32}}>DCF valuation, multi-phase modelling, scenario analysis and board-ready proposals — for businesses that make serious investment decisions.</div>
+          <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:28}}>
+            <button className="btn btn-primary" style={{fontSize:15,padding:"12px 24px"}} onClick={onDash||onLaunch}>{onDash?"Go to my dashboard →":"Create free account →"}</button>
+            <button className="btn btn-secondary" style={{fontSize:15,padding:"12px 24px"}} onClick={onDash||onLaunch}>{onDash?"Open a project":"Try demo"}</button>
+          </div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+            {["✓ Real DCF with Fisher equation","✓ Break-even finder","✓ EVA & RONA","✓ Auto PDF proposals"].map(t=>(
+              <span key={t} style={{fontSize:12,color:"var(--text-tertiary)",fontWeight:500}}>{t}</span>
             ))}
           </div>
         </div>
 
-        <div className="acard fade-up fade-up-2" style={{ marginBottom:20 }}>
-          <div className="acard-header"><span className="acard-title">Change Password</span></div>
-          <div className="acard-body">
-            {pwSuccess && <div className="auth-success" style={{ marginBottom:16 }}>✓ Password updated successfully!</div>}
-            {pwError   && <div className="auth-error"   style={{ marginBottom:16 }}>⚠ {pwError}</div>}
-            <div className="auth-field">
-              <label>New Password</label>
-              <div className="auth-password-wrap">
-                <input className="auth-input" type={showPw ? "text" : "password"} placeholder="Min. 6 characters"
-                  value={newPassword} onChange={e => setNewPassword(e.target.value)} style={{ paddingRight:40 }} />
-                <button className="auth-password-toggle" onClick={() => setShowPw(p => !p)}>{showPw ? "Hide" : "Show"}</button>
-              </div>
+        {/* Preview card */}
+        <div style={{flex:"0 0 380px",background:"linear-gradient(145deg,#1a1a2e,#0f3460)",borderRadius:24,padding:24,boxShadow:"0 32px 80px rgba(0,0,0,0.3)"}}>
+          <div style={{fontSize:11,color:"rgba(255,255,255,0.35)",fontWeight:700,letterSpacing:"1px",textTransform:"uppercase",marginBottom:16}}>Live Results Preview</div>
+          {[
+            {l:"NPV (Nominal)",v:"€ 284,500",c:"var(--green)"},
+            {l:"NPV (Real)",v:"€ 241,200",c:"var(--green)"},
+            {l:"IRR",v:"14.2%",c:"rgba(255,255,255,0.9)"},
+            {l:"MIRR",v:"11.8%",c:"rgba(255,255,255,0.9)"},
+            {l:"Payback",v:"4 years",c:"rgba(255,255,255,0.9)"},
+            {l:"PI",v:"1.38×",c:"var(--green)"},
+            {l:"RONA",v:"18.4%",c:"var(--green)"},
+            {l:"Total EVA",v:"€ 142,000",c:"var(--green)"},
+          ].map((r,i,arr)=>(
+            <div key={r.l} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<arr.length-1?"1px solid rgba(255,255,255,0.08)":"none"}}>
+              <span style={{fontSize:12,color:"rgba(255,255,255,0.4)",fontWeight:500}}>{r.l}</span>
+              <span style={{fontSize:13,fontWeight:700,color:r.c,fontVariantNumeric:"tabular-nums"}}>{r.v}</span>
             </div>
-            <div className="auth-field">
-              <label>Confirm New Password</label>
-              <input className={`auth-input ${confirmPw && confirmPw !== newPassword ? "error" : ""}`}
-                type={showPw ? "text" : "password"} placeholder="Repeat new password"
-                value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleChangePassword()} />
-              {confirmPw && confirmPw !== newPassword && <div style={{ fontSize:11, color:"var(--red)", marginTop:4 }}>Passwords don't match</div>}
-            </div>
-            <button className={`auth-btn ${pwLoading ? "loading" : ""}`} onClick={handleChangePassword} disabled={pwLoading} style={{ marginTop:4 }}>
-              {pwLoading ? "" : "Update Password →"}
-            </button>
+          ))}
+          <div style={{marginTop:16,background:"rgba(52,199,89,0.15)",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",gap:8}}>
+            <span>✅</span>
+            <span style={{fontSize:12,color:"var(--green)",fontWeight:600}}>RECOMMENDED — Creates value above WACC</span>
           </div>
         </div>
+      </div>
 
-        <div className="acard fade-up fade-up-3" style={{ border:"1.5px solid #fca5a5" }}>
-          <div className="acard-header" style={{ background:"#fde8e8", borderBottom:"1px solid #fca5a5" }}>
-            <span className="acard-title" style={{ color:"var(--red)" }}>⚠ Account Actions</span>
-          </div>
-          <div className="acard-body">
-            <div style={{ fontSize:13, color:"var(--ink2)", marginBottom:16, lineHeight:1.6 }}>
-              Signing out will end your current session. You can sign back in at any time.
-            </div>
-            <button onClick={onLogout}
-              style={{ padding:"10px 20px", borderRadius:7, border:"1.5px solid var(--red)", background:"none", color:"var(--red)", fontFamily:"var(--sans)", fontSize:14, fontWeight:600, cursor:"pointer", transition:"all 0.15s" }}
-              onMouseEnter={e => e.currentTarget.style.background="#fde8e8"}
-              onMouseLeave={e => e.currentTarget.style.background="none"}>
-              Sign out
-            </button>
+      {/* Features */}
+      <div style={{background:"var(--bg2)",borderTop:"1px solid var(--sep)",padding:"80px 32px"}}>
+        <div style={{maxWidth:1120,margin:"0 auto"}}>
+          <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.8px",textTransform:"uppercase",color:"var(--blue)",marginBottom:14}}>What You Get</div>
+          <div style={{fontSize:"clamp(28px,4vw,40px)",fontWeight:800,letterSpacing:"-1px",marginBottom:14}}>Everything a finance team has.<br/><span style={{color:"var(--blue)"}}>Without the finance team.</span></div>
+          <div style={{fontSize:16,color:"var(--text-secondary)",marginBottom:52,maxWidth:500}}>Every feature modelled on professional investment appraisal methodology used by investment banks.</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:1,background:"var(--sep)",borderRadius:16,overflow:"hidden"}}>
+            {FEATS.map(f=>(
+              <div key={f.n} style={{background:"var(--bg2)",padding:"24px",transition:"background 0.15s"}} onMouseEnter={e=>e.currentTarget.style.background="var(--fill)"} onMouseLeave={e=>e.currentTarget.style.background="var(--bg2)"}>
+                <div style={{fontSize:28,fontWeight:800,color:"var(--sep)",marginBottom:12,fontVariantNumeric:"tabular-nums"}}>{f.n}</div>
+                <div style={{fontSize:15,fontWeight:700,marginBottom:8}}>{f.t}</div>
+                <div style={{fontSize:13,color:"var(--text-tertiary)",lineHeight:1.6,marginBottom:12}}>{f.d}</div>
+                <div style={{display:"inline-block",fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"var(--blue-bg)",color:"var(--blue)",textTransform:"uppercase",letterSpacing:"0.5px"}}>{f.tag}</div>
+              </div>
+            ))}
           </div>
         </div>
+      </div>
+
+      {/* CTA */}
+      <div style={{background:"var(--blue)",padding:"80px 32px",textAlign:"center"}}>
+        <div style={{fontSize:"clamp(28px,4vw,42px)",fontWeight:800,color:"#fff",letterSpacing:"-1px",marginBottom:16}}>Start your first analysis today</div>
+        <div style={{fontSize:16,color:"rgba(255,255,255,0.7)",marginBottom:32}}>Free forever on your first project. No credit card required.</div>
+        <div style={{display:"flex",gap:12,justifyContent:"center",flexWrap:"wrap"}}>
+          <button style={{background:"#fff",color:"var(--blue)",padding:"14px 28px",borderRadius:10,fontSize:15,fontWeight:700,cursor:"pointer",border:"none",fontFamily:"inherit",transition:"all 0.15s"}} onClick={onDash||onLaunch} onMouseEnter={e=>e.currentTarget.style.transform="translateY(-2px)"} onMouseLeave={e=>e.currentTarget.style.transform="none"}>{onDash?"Go to my dashboard →":"Create free account →"}</button>
+          {!onDash&&<button style={{background:"transparent",color:"#fff",padding:"14px 24px",borderRadius:10,fontSize:15,fontWeight:600,cursor:"pointer",border:"2px solid rgba(255,255,255,0.4)",fontFamily:"inherit"}} onClick={onLaunch}>Try demo first</button>}
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div style={{background:"var(--bg2)",borderTop:"1px solid var(--sep)",padding:"32px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div className="logo-mark">C</div>
+          <span style={{fontWeight:700,fontSize:15}}>CapitalIQ</span>
+          <span style={{color:"var(--text-tertiary)",fontSize:13}}>© {new Date().getFullYear()}</span>
+        </div>
+        <div style={{fontSize:13,color:"var(--text-tertiary)"}}>Professional investment analysis for businesses that mean business.</div>
       </div>
     </div>
   );
