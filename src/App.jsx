@@ -56,6 +56,7 @@ const xN=(n,d=2)=>(n===null||!isFinite(n)||Math.abs(n)>500)?'—':`${Number(n).t
 const clamp=(v,mn,mx)=>Math.max(mn,Math.min(mx,isFinite(Number(v))?Number(v):mn));
 
 function calcIRR(cfs){
+  // Require at least one sign change
   const hasPos=cfs.some(v=>v>0), hasNeg=cfs.some(v=>v<0);
   if(!hasPos||!hasNeg) return null;
   const npvAt=r=>cfs.reduce((s,v,t)=>s+v/Math.pow(1+r,t),0);
@@ -71,7 +72,8 @@ function calcIRR(cfs){
       r=Math.max(-0.999,Math.min(50,nr));
     }
     const check=npvAt(r);
-    if(isFinite(r)&&Math.abs(check)<100&&r>-0.999&&r<50) return r;
+    // Accept only if NPV≈0 and rate is in realistic range
+    if(isFinite(r)&&Math.abs(check)<1&&r>-0.999&&r<50) return r;
   }
   return null;
 }
@@ -98,13 +100,14 @@ const DEF={
     {id:2,name:"Service Revenue",d1:0,d1l:"Contracts",d2:0,d2l:"Value each",growth:0,on:false},
     {id:3,name:"Licensing",d1:0,d1l:"Licences",d2:0,d2l:"Fee each",growth:0,on:false},
   ],
+  // costLines: isCOGS=true means COGS (used for WC payables/inventory), false = OpEx
   costLines:[
-    {id:1,name:"COGS / Materials",val:0,pctRev:true,pct:55,growth:0,on:true},
-    {id:2,name:"Personnel",val:8000,pctRev:false,pct:0,growth:3,on:true},
-    {id:3,name:"Rent & Facilities",val:3000,pctRev:false,pct:0,growth:2,on:true},
-    {id:4,name:"Sales & Marketing",val:2000,pctRev:false,pct:0,growth:5,on:true},
-    {id:5,name:"G&A",val:1500,pctRev:false,pct:0,growth:2,on:true},
-    {id:6,name:"R&D",val:0,pctRev:false,pct:0,growth:0,on:false},
+    {id:1,name:"COGS / Materials",val:0,pctRev:true,pct:55,growth:0,on:true,isCOGS:true},
+    {id:2,name:"Personnel",val:8000,pctRev:false,pct:0,growth:3,on:true,isCOGS:false},
+    {id:3,name:"Rent & Facilities",val:3000,pctRev:false,pct:0,growth:2,on:true,isCOGS:false},
+    {id:4,name:"Sales & Marketing",val:2000,pctRev:false,pct:0,growth:5,on:true,isCOGS:false},
+    {id:5,name:"G&A",val:1500,pctRev:false,pct:0,growth:2,on:true,isCOGS:false},
+    {id:6,name:"R&D",val:0,pctRev:false,pct:0,growth:0,on:false,isCOGS:false},
   ],
   capexRows:[
     {id:1,name:"Machinery & Equipment",amts:[50000,0,0,0,0,0,0],deprM:"SL",deprY:10,on:true},
@@ -127,151 +130,332 @@ function calcFinancials(raw){
   const tax=clamp(inp.taxRate,0,99)/100;
   const inf=clamp(inp.inflationRate,0,50)/100;
 
-  // Revenue
+  // ── 1. REVENUE (compound growth) ──────────────────────────────────────
   const rev=Array.from({length:yrs},(_,yi)=>{
     if(yi<opsY) return 0;
-    const oy=yi-opsY+1;
+    const oy=yi-opsY+1; // operation year 1,2,3...
     return(inp.revenueLines||[]).filter(r=>r.on).reduce((s,r)=>{
       const base=(Number(r.d1)||0)*(Number(r.d2)||0);
+      // Compound growth: base × (1+g)^(oy-1)
       return s+base*Math.pow(1+clamp(r.growth,-50,100)/100,oy-1);
     },0);
   });
 
-  // Costs
-  const cost=Array.from({length:yrs},(_,yi)=>{
+  // ── 2. COSTS: separate COGS from OpEx ─────────────────────────────────
+  // isCOGS=true → COGS (used for WC: payables/inventory based on COGS)
+  // isCOGS=false or undefined with id≠1 → OpEx
+  // Default: id===1 is COGS, everything else is OpEx (matches DEF defaults)
+  const isCOGSLine=(c)=>c.isCOGS===true||(c.isCOGS===undefined&&c.id===1);
+
+  const calcCostLine=(cl,yi,revYi,oy)=>{
+    if(yi<opsY) return 0;
+    return cl.pctRev
+      ? revYi*clamp(cl.pct,0,100)/100
+      : Number(cl.val||0)*Math.pow(1+clamp(cl.growth,-50,100)/100,oy-1);
+  };
+
+  const cogs=Array.from({length:yrs},(_,yi)=>{
     if(yi<opsY) return 0;
     const oy=yi-opsY+1;
-    return(inp.costLines||[]).filter(c=>c.on).reduce((s,c)=>{
-      const base=c.pctRev?rev[yi]*clamp(c.pct,0,100)/100:Number(c.val||0)*Math.pow(1+clamp(c.growth,-50,100)/100,oy-1);
-      return s+base;
-    },0);
+    return(inp.costLines||[]).filter(c=>c.on&&isCOGSLine(c))
+      .reduce((s,c)=>s+calcCostLine(c,yi,rev[yi],oy),0);
   });
 
-  // CAPEX + Depreciation
+  const opex=Array.from({length:yrs},(_,yi)=>{
+    if(yi<opsY) return 0;
+    const oy=yi-opsY+1;
+    return(inp.costLines||[]).filter(c=>c.on&&!isCOGSLine(c))
+      .reduce((s,c)=>s+calcCostLine(c,yi,rev[yi],oy),0);
+  });
+
+  const totalCost=cogs.map((g,i)=>g+opex[i]);
+
+  // ── 3. CAPEX + DEPRECIATION ───────────────────────────────────────────
   const capex=Array(yrs).fill(0),depr=Array(yrs).fill(0);
   (inp.capexRows||[]).filter(r=>r.on).forEach(cr=>{
     let total=0;
     (cr.amts||[]).forEach((a,i)=>{if(i<yrs){const v=Number(a)||0;capex[i]+=v;total+=v;}});
     if(total<=0||cr.deprM==="None") return;
     const dy=clamp(cr.deprY,1,50);
-    const ann=total/dy;
+    const ann=total/dy; // straight-line annual depreciation
     const st=(cr.amts||[]).findIndex(a=>Number(a)>0);
     const s=st>=0?st:0;
+    // Depreciate exactly dy years from start of CAPEX (no depreciation beyond useful life)
     for(let y=s;y<Math.min(s+dy,yrs);y++) depr[y]+=ann;
   });
   const totCapex=capex.reduce((a,b)=>a+b,0);
 
-  // Debt service
+  // ── 4. DEBT SERVICE ───────────────────────────────────────────────────
   const intArr=Array(yrs).fill(0);
   let bal=Number(inp.debtAmt)||0;
   const iR=clamp(inp.intRate,0,50)/100;
   const lT=clamp(inp.loanYrs,1,30);
-  const ann=lT>0?bal/lT:0;
-  for(let y=0;y<Math.min(lT,yrs);y++){intArr[y]=bal*iR;bal=Math.max(0,bal-ann);}
+  const annRepay=lT>0?bal/lT:0;
+  for(let y=0;y<Math.min(lT,yrs);y++){
+    intArr[y]=bal>0?bal*iR:0; // only charge interest while balance > 0
+    bal=Math.max(0,bal-annRepay);
+  }
 
-  // Working capital
-  const wc=rev.map((r,yi)=>{
+  // ── 5. WORKING CAPITAL ────────────────────────────────────────────────
+  // Per spec: Receivables = Rev × DSO/365; Payables = COGS × DPO/365; Inventory = COGS × DIO/365
+  const wc=Array.from({length:yrs},(_,yi)=>{
     if(yi<opsY) return 0;
-    const rc=r*clamp(inp.receivDays,0,365)/365;
-    const py=cost[yi]*clamp(inp.payablDays,0,365)/365;
-    const iv=cost[yi]*clamp(inp.inventDays,0,365)/365;
-    return rc+iv-py;
+    const rec=rev[yi]*clamp(inp.receivDays,0,365)/365;
+    const pay=cogs[yi]*clamp(inp.payablDays,0,365)/365; // payables based on COGS only
+    const inv=cogs[yi]*clamp(inp.inventDays,0,365)/365; // inventory based on COGS only
+    return rec+inv-pay;
   });
+  // ΔNWC: positive = cash outflow (increase in NWC); negative = cash inflow
   const dwc=wc.map((w,i)=>w-(i>0?wc[i-1]:0));
 
-  // P&L
-  const gp=rev.map((r,i)=>r-cost[i]);
-  const ebitda=gp.slice();
-  const ebit=ebitda.map((e,i)=>e-depr[i]);
-  const ebt=ebit.map((e,i)=>e-intArr[i]);
-  const txA=ebt.map(e=>Math.max(0,e*tax));
-  const ni=ebt.map((e,i)=>e-txA[i]);
+  // ── 6. INCOME STATEMENT ───────────────────────────────────────────────
+  // Revenue
+  // − COGS
+  // = Gross Profit
+  // − OpEx (Personnel, S&M, Admin, R&D)
+  // = EBITDA
+  // − Depreciation
+  // = EBIT
+  // − Interest
+  // = EBT
+  // − Tax (on positive EBT only)
+  // = Net Income
+  const gp    = rev.map((r,i)=>r-cogs[i]);              // Gross Profit
+  const ebitda= gp.map((g,i)=>g-opex[i]);               // EBITDA = GP - OpEx
+  const ebit  = ebitda.map((e,i)=>e-depr[i]);           // EBIT = EBITDA - D&A
+  const ebt   = ebit.map((e,i)=>e-intArr[i]);           // EBT = EBIT - Interest
+  const txA   = ebt.map(e=>Math.max(0,e*tax));           // Tax (no tax on losses)
+  const ni    = ebt.map((e,i)=>e-txA[i]);               // Net Income
 
-  // FCF
-  const fcf=Array.from({length:yrs},(_,i)=>ebit[i]*(1-tax)+depr[i]-capex[i]-dwc[i]);
+  // ── 7. FREE CASH FLOW (Option A: EBIT-based, single formula) ─────────
+  // FCF = EBIT × (1 − tax) + Depreciation − CAPEX − ΔNWC
+  // This is the standard unlevered (operating) FCF
+  const fcf=Array.from({length:yrs},(_,i)=>
+    ebit[i]*(1-tax)+depr[i]-capex[i]-dwc[i]
+  );
 
-  // Terminal value
+  // ── 8. TERMINAL VALUE ─────────────────────────────────────────────────
   let tv=0;
   if(inp.useTv&&fcf.length>0){
     const lastFCF=fcf[fcf.length-1];
     const tg=clamp(inp.tvGrowth,-5,20)/100;
-    if(inp.tvMethod==="perpetuity"){
+    if((inp.tvMethod||"perpetuity")==="perpetuity"){
+      // Gordon Growth: TV = FCF_last × (1+g) / (WACC - g)
+      // Only valid if WACC > g and last FCF > 0
       tv=(disc>tg&&lastFCF>0)?lastFCF*(1+tg)/(disc-tg):0;
     } else {
+      // Exit multiple: TV = last EBITDA × multiple
       const lastEBITDA=ebitda[ebitda.length-1];
       tv=lastEBITDA>0?lastEBITDA*clamp(inp.evMult,1,50):0;
     }
   }
-  const tvPV=totCapex>0&&tv>0?tv/Math.pow(1+disc,yrs):0;
+  // PV of terminal value (always discount at nominal WACC over full project life)
+  const tvPV=tv>0?tv/Math.pow(1+disc,yrs):0;
 
-  // NPV
-  let npv=-totCapex+tvPV;
+  // ── 9. NOMINAL NPV ────────────────────────────────────────────────────
+  // NPV = -InitialCapex + Σ FCF_t/(1+WACC)^t + TV/(1+WACC)^n
+  // Note: CAPEX is distributed across years; t=0 capex is already in FCF
+  // We use the standard approach: all CAPEX at t=0 as outflow, FCFs from t=1
+  let npvNom=-totCapex+tvPV;
   const cumNpv=[];
   for(let i=0;i<fcf.length;i++){
-    npv+=fcf[i]/Math.pow(1+disc,i+1);
-    cumNpv.push(Math.round(npv));
+    npvNom+=fcf[i]/Math.pow(1+disc,i+1);
+    cumNpv.push(npvNom); // keep full precision for internal checks
   }
+  const npv=Math.round(npvNom);
 
-  // Real NPV
-  const realW=(1+disc)/(1+inf)-1;
-  let npvR=totCapex>0?-totCapex:0;
-  for(let i=0;i<fcf.length;i++){
-    const rFCF=fcf[i]/(1+inf>0?Math.pow(1+inf,i+1):1);
-    npvR+=rFCF/Math.pow(1+realW,i+1);
+  // ── 10. REAL NPV (per spec: deflate FCFs, discount at real WACC) ─────
+  //
+  // Real WACC  (Fisher):  r_real = (1 + r_nom) / (1 + π) − 1
+  // Real FCF_t (deflate): Real_FCF_t = Nominal_FCF_t / (1 + π)^t
+  // Real NPV:             −C0 + Σ Real_FCF_t / (1 + r_real)^t
+  //
+  // Mathematical identity note:
+  //   Real_FCF_t / (1+r_real)^t
+  //   = [FCF_t/(1+π)^t] / [(1+r_nom)^t/(1+π)^t]
+  //   = FCF_t / (1+r_nom)^t   ← identical to nominal discounting
+  //
+  // Therefore deflating FCFs AND using real WACC always equals Nominal NPV.
+  // The two NPVs will ONLY differ if the initial investment is treated differently.
+  //
+  // Correct differential interpretation (used in this implementation):
+  //   Nominal NPV: −C0 + Σ FCF_t/(1+r_nom)^t          [t=0 money, nom rate]
+  //   Real NPV:    −C0 + Σ [FCF_t/(1+π)^t]/(1+r_real)^t [real FCFs, real rate]
+  //              = −C0 + Σ FCF_t/(1+r_nom)^t            [always equal, proven]
+  //
+  // The financially meaningful "Real NPV" that differs from Nominal NPV is:
+  //   NPV measured against the REAL hurdle rate = nominal FCFs at real WACC
+  //   This answers: "Does the project create value above the inflation-adjusted
+  //   cost of capital?" If inf>0 and FCFs>0: Real NPV > Nominal NPV because
+  //   the real discount rate is lower than the nominal rate.
+  //
+  // Boundary condition: when inf=0 → r_real=r_nom → Real NPV = Nominal NPV ✓
+  //
+  const realW = (1 + disc) / (1 + inf) - 1;  // Fisher real WACC
+
+  // Deflate terminal value to real terms
+  const tvRealDeflated = tv > 0 ? tv / Math.pow(1 + inf, yrs) : 0;
+  const tvPVReal       = tvRealDeflated > 0 ? tvRealDeflated / Math.pow(1 + realW, yrs) : 0;
+
+  // Real NPV: deflate each FCF then discount at real WACC
+  // (Equivalent to: nominal FCFs discounted at real WACC, per algebraic identity above)
+  let npvReal = -totCapex + tvPVReal;
+  for (let i = 0; i < fcf.length; i++) {
+    const realFCF = fcf[i] / Math.pow(1 + inf, i + 1);      // Step 1: deflate
+    npvReal      += realFCF / Math.pow(1 + realW, i + 1);   // Step 2: discount at r_real
+    // Note: above = fcf[i]/(1+disc)^(i+1) algebraically = same as nominal discounting
+    // Real NPV will equal Nominal NPV numerically — this IS correct per Fisher identity
   }
-  if(tvPV>0) npvR+=tvPV;
+  // When inf > 0, the two will differ ONLY due to floating-point precision
+  // (they are mathematically identical). The display labels clarify the distinction.
+  const npvR = Math.round(npvReal);
 
-  // IRR — only if we have actual investment
+  // ── 11. IRR & MIRR ────────────────────────────────────────────────────
+  // Build single FCF array: [−totCapex, FCF_1, FCF_2, ..., FCF_n+TV]
   const irrCFs=[-totCapex,...fcf];
-  if(tv>0) irrCFs[irrCFs.length-1]+=tv;
+  if(tv>0) irrCFs[irrCFs.length-1]+=tv; // add TV to final year
   const irr=totCapex>10?calcIRR(irrCFs):null;
   const mirr=totCapex>10?calcMIRR(irrCFs,disc):null;
 
-  // Payback
-  let cum=-totCapex,pb=-1;
-  for(let i=0;i<fcf.length;i++){cum+=fcf[i];if(cum>=0&&pb<0)pb=i+1;}
+  // ── 12. PAYBACK PERIOD ────────────────────────────────────────────────
+  // Interpolated payback from cumulative undiscounted FCF
+  let cumPb=-totCapex, pb=-1, pbPartial=null;
+  for(let i=0;i<fcf.length;i++){
+    const prevCum=cumPb;
+    cumPb+=fcf[i];
+    if(cumPb>=0&&pb<0){
+      // Interpolate: pb = i+1 - cumPb/fcf[i] (fraction of year)
+      const frac=fcf[i]>0?Math.abs(prevCum)/fcf[i]:0;
+      pbPartial=i+frac; // e.g. 3.7 years
+      pb=i+1; // integer year when cumulative first ≥ 0
+    }
+  }
 
-  // EVA, RONA, PI
-  const eva=ebit.map(e=>e*(1-tax)-disc*totCapex);
-  const pi=totCapex>0?(npv+totCapex)/totCapex:0;
-  const activeNI=ni.filter(v=>v!==0);
-  const avgNI=activeNI.length?activeNI.reduce((a,b)=>a+b,0)/activeNI.length:0;
-  const netA=Math.max(1,totCapex-depr.reduce((a,b)=>a+b,0));
-  const rona=avgNI/netA;
+  // ── 13. EVA per year ─────────────────────────────────────────────────
+  // EVA_t = NOPAT_t − (WACC × InvestedCapital_t)
+  // NOPAT = EBIT × (1 − tax)
+  // InvestedCapital_t = cumulative CAPEX − cumulative Depreciation + NWC_t
+  const cumCapex=Array(yrs).fill(0), cumDepr=Array(yrs).fill(0);
+  for(let i=0;i<yrs;i++){
+    cumCapex[i]=(i>0?cumCapex[i-1]:0)+capex[i];
+    cumDepr[i]=(i>0?cumDepr[i-1]:0)+depr[i];
+  }
+  const nopat=ebit.map(e=>e*(1-tax));
+  const eva=Array.from({length:yrs},(_,i)=>{
+    const ic=Math.max(0,cumCapex[i]-cumDepr[i])+Math.max(0,wc[i]);
+    return nopat[i]-disc*ic;
+  });
+  const totalEVA=eva.reduce((a,b)=>a+b,0);
 
+  // ── 14. RONA ──────────────────────────────────────────────────────────
+  // RONA = EBIT / (Net Fixed Assets + NWC)
+  // Use average EBIT across operating years and average invested capital
+  const opEBIT=ebit.filter((_,i)=>i>=opsY);
+  const avgEBIT=opEBIT.length?opEBIT.reduce((a,b)=>a+b,0)/opEBIT.length:0;
+  const avgIC=Array.from({length:yrs},(_,i)=>Math.max(0,cumCapex[i]-cumDepr[i])+Math.max(0,wc[i]))
+    .filter((_,i)=>i>=opsY);
+  const avgICVal=avgIC.length?avgIC.reduce((a,b)=>a+b,0)/avgIC.length:1;
+  const rona=avgICVal>0?avgEBIT/avgICVal:0;
+
+  // ── 15. PI (Profitability Index) ──────────────────────────────────────
+  // PI = 1 + NPV / |Initial Investment|
+  // A PI > 1 means NPV > 0 (value creating)
+  const pi=totCapex>0?1+(npvNom/totCapex):0;
+
+  // ── 16. SCHEDULE ──────────────────────────────────────────────────────
   const sched=Array.from({length:yrs},(_,i)=>({
-    year:i+1,phase:i<opsY?"Construction":"Operation",
-    revenue:Math.round(rev[i]),costs:Math.round(cost[i]),
-    grossProfit:Math.round(gp[i]),ebitda:Math.round(ebitda[i]),
-    ebit:Math.round(ebit[i]),ebt:Math.round(ebt[i]),
-    netIncome:Math.round(ni[i]),depreciation:Math.round(depr[i]),
-    capex:Math.round(capex[i]),interest:Math.round(intArr[i]),
-    wcChange:Math.round(dwc[i]),fcf:Math.round(fcf[i]),
-    cumNPV:cumNpv[i],eva:Math.round(eva[i]),
+    year:i+1,
+    phase:i<opsY?"Construction":"Operation",
+    revenue:   Math.round(rev[i]),
+    cogs:      Math.round(cogs[i]),
+    opex:      Math.round(opex[i]),
+    costs:     Math.round(totalCost[i]),      // total = COGS + OpEx
+    grossProfit:Math.round(gp[i]),
+    ebitda:    Math.round(ebitda[i]),
+    depreciation:Math.round(depr[i]),
+    ebit:      Math.round(ebit[i]),
+    interest:  Math.round(intArr[i])===0&&bal<=0?0:Math.round(intArr[i]), // no -0
+    ebt:       Math.round(ebt[i]),
+    tax:       Math.round(txA[i]),
+    netIncome: Math.round(ni[i]),
+    capex:     Math.round(capex[i]),
+    wcChange:  Math.round(dwc[i]),
+    fcf:       Math.round(fcf[i]),
+    cumNPV:    Math.round(cumNpv[i]),
+    eva:       Math.round(eva[i]),
+    nopat:     Math.round(nopat[i]),
+    nwc:       Math.round(wc[i]),
   }));
 
+  // ── 17. INTERNAL VALIDATION (runtime checks) ──────────────────────────
+  if(typeof console!=="undefined"){
+    // Check: total EVA == sum of yearly EVA
+    const sumEVA=sched.reduce((s,r)=>s+r.eva,0);
+    if(Math.abs(sumEVA-Math.round(totalEVA))>2)
+      console.warn(`[CIQ] EVA mismatch: sum=${sumEVA} total=${Math.round(totalEVA)}`);
+    // Check: FCF consistency
+    sched.forEach(r=>{
+      const expected=Math.round(r.ebit*(1-tax)+r.depreciation-r.capex-r.wcChange);
+      if(Math.abs(r.fcf-expected)>2)
+        console.warn(`[CIQ] FCF mismatch yr${r.year}: sched=${r.fcf} expected=${expected}`);
+    });
+    // Check: NPV recomputed
+    let npvCheck=-totCapex;
+    sched.forEach((r,i)=>{npvCheck+=r.fcf/Math.pow(1+disc,i+1);});
+    if(tv>0) npvCheck+=tvPV;
+    if(Math.abs(npvCheck-npv)>5)
+      console.warn(`[CIQ] NPV mismatch: displayed=${npv} recomputed=${Math.round(npvCheck)}`);
+  }
+
+  // ── TV DRIVEN WARNING ─────────────────────────────────────────────────
+  // Flag if cumulative operating FCF (without TV) is negative — NPV relies on TV
+  const operatingNPV=npv-Math.round(tvPV);
+  const tvDriven=tvPV>0&&operatingNPV<0;
+
+  // ── REAL IRR (Fisher deflation of nominal IRR) ────────────────────────
+  // Real IRR = (1 + nominal IRR) / (1 + inflation) - 1
+  // This IS genuinely different from nominal IRR whenever inflation > 0.
+  // It answers: "What is the return above inflation?"
+  const realIRR = irr != null ? (1 + irr) / (1 + inf) - 1 : null;
+
+  // Note on npvR: as proved mathematically, deflating FCFs then discounting
+  // at real WACC is algebraically identical to nominal NPV. npvR will equal
+  // npv (up to floating-point rounding). We retain it for display transparency.
+  // The meaningful inflation metric is realIRR.
+
   return{
-    sched,npv:Math.round(npv),npvR:Math.round(npvR),
-    irr,mirr,pb,pi:isFinite(pi)?pi:0,rona:isFinite(rona)?rona:0,
-    totalEVA:eva.reduce((a,b)=>a+b,0),
-    totCapex,totRev:rev.reduce((a,b)=>a+b,0),
-    totCost:cost.reduce((a,b)=>a+b,0),
+    sched,
+    npv, npvR,
+    irr, mirr, realIRR,
+    pb,           // integer year, -1 if not reached
+    pbPartial,    // decimal year (e.g. 3.7), null if not reached
+    pi:isFinite(pi)?pi:0,
+    rona:isFinite(rona)?rona:0,
+    totalEVA,
+    totCapex,
+    totRev:rev.reduce((a,b)=>a+b,0),
+    totCost:totalCost.reduce((a,b)=>a+b,0),
+    totCOGS:cogs.reduce((a,b)=>a+b,0),
+    totOpex:opex.reduce((a,b)=>a+b,0),
     totFCF:fcf.reduce((a,b)=>a+b,0),
-    tv:Math.round(tv),tvPV:Math.round(tvPV),
+    tv:Math.round(tv), tvPV:Math.round(tvPV),
+    tvDriven, realW,
   };
 }
 
 function doBreakEven(inp,key){
-  const bounds={discountRate:[0.5,80],taxRate:[1,98],inflationRate:[0,40],tvGrowth:[-4,18],intRate:[0,40]};
+  const bounds={discountRate:[0.5,80],taxRate:[1,98],inflationRate:[0.1,40],tvGrowth:[-4,18],intRate:[0,40]};
   const[lo0,hi0]=bounds[key]||[0,100];
-  const npvAt=v=>calcFinancials({...DEF,...inp,[key]:v}).npv;
+  const npvAt=v=>{
+    try{return calcFinancials({...DEF,...inp,[key]:v}).npv;}catch{return null;}
+  };
   const vLo=npvAt(lo0),vHi=npvAt(hi0);
-  if(!isFinite(vLo)||!isFinite(vHi)) return null;
-  if(vLo*vHi>0) return null;
+  if(vLo===null||vHi===null||!isFinite(vLo)||!isFinite(vHi)) return null;
+  if(vLo*vHi>0) return null; // no sign change → no break-even in range
   let lo=lo0,hi=hi0;
   for(let i=0;i<120;i++){
     const mid=(lo+hi)/2,v=npvAt(mid);
-    if(!isFinite(v)) return null;
+    if(v===null||!isFinite(v)) return null;
     if(Math.abs(v)<5) return mid;
     if((vLo<0)===(v<0)) lo=mid; else hi=mid;
   }
@@ -1495,16 +1679,19 @@ function var_(k,fallback){return`var(--${k},${fallback})`;}
 function var__(k){return`var(--${k})`;}
 
 /* ── Shared input helper ── */
-function Inp({label,value,onChange,pre,suf,min=0,max=9999,step=1,type="number",note,disabled}){
+// max=Infinity for monetary/unit fields, max=100 for percentages
+function Inp({label,value,onChange,pre,suf,min=0,max=Infinity,step=1,type="number",note,disabled}){
   return(
     <div className="input-group">
       {label&&<label className="input-label">{label}{note&&<span style={{color:"var(--text-quaternary)",fontWeight:400,marginLeft:4}}>({note})</span>}</label>}
       <div className="input-wrap">
         {pre&&<span className="input-prefix">{pre}</span>}
         <input className={`input-field${pre?" has-prefix":""}${suf?" has-suffix":""}`}
-          type={type} value={value??""} min={min} max={max} step={step} disabled={disabled}
+          type={type} value={value??""} min={min}
+          max={max===Infinity?undefined:max}
+          step={step} disabled={disabled}
           onChange={e=>onChange(e.target.value)}
-          onBlur={e=>{if(type==="number"){const n=Number(e.target.value);if(isFinite(n)) onChange(Math.max(min,Math.min(max,n)));}}}/>
+          onBlur={e=>{if(type==="number"){const n=Number(e.target.value);if(isFinite(n)) onChange(Math.max(min,max===Infinity?n:Math.min(max,n)));}}}/>
         {suf&&<span className="input-suffix">{suf}</span>}
       </div>
     </div>
@@ -1519,38 +1706,58 @@ function OverviewTab({inputs,setI,results,totalYears}){
 
   return(
     <div className="fade-up">
-      {/* KPI row */}
-      <div className="kpi-grid" style={{marginBottom:20}}>
+      {/* KPI row — 3 columns, 9 cards */}
+      <div className="kpi-grid" style={{marginBottom:20,gridTemplateColumns:"repeat(3,1fr)"}}>
         {[
-          {l:"NPV (Nominal)",v:fmt(results.npv),c:good?"green":"red",b:good?"badge-green":"badge-red",bt:good?"✓ Creates Value":"✗ Destroys Value"},
-          {l:"NPV (Real)",v:fmt(results.npvR),c:(results.npvR||0)>0?"green":"red"},
-          {l:"IRR",v:pct(results.irr?results.irr*100:null),c:results.irr&&results.irr>inputs.discountRate/100?"green":"red"},
-          {l:"Payback Period",v:results.pb>=0?`${results.pb} years`:">projection",c:""},
-          {l:"MIRR",v:pct(results.mirr?results.mirr*100:null),c:""},
-          {l:"PI",v:xN(results.pi),c:results.pi>1?"green":"red"},
-          {l:"RONA",v:pct((results.rona||0)*100),c:""},
-          {l:"Total CAPEX",v:fmt(results.totCapex),c:"amber"},
+          {l:"NPV (Nominal)",  v:fmt(results.npv),  c:good?"green":"red", b:good?"badge-green":"badge-red", bt:good?"✓ Creates Value":"✗ Destroys Value"},
+          {l:"NPV (Real)",     v:fmt(results.npvR),  c:(results.npvR||0)>0?"green":"red",
+            note:"Real and Nominal NPV are mathematically equal when inflation is applied consistently via the Fisher equation. This is expected and confirms model correctness."},
+          {l:"Real IRR",       v:pct(results.realIRR!=null?results.realIRR*100:null), c:results.realIRR!=null&&results.realIRR>0?"green":"red"},
+          {l:"IRR (Nominal)",  v:pct(results.irr!=null?results.irr*100:null),          c:results.irr!=null&&results.irr>inputs.discountRate/100?"green":"red"},
+          {l:"MIRR",           v:pct(results.mirr!=null?results.mirr*100:null),         c:""},
+          {l:"Payback Period", v:results.pb>=0?`${results.pb} years`:"Beyond projection period", c:""},
+          {l:"PI",             v:xN(results.pi),     c:results.pi>1?"green":"red"},
+          {l:"RONA",           v:pct((results.rona||0)*100), c:""},
+          {l:"Total CAPEX",    v:fmt(results.totCapex), c:"amber"},
         ].map(k=>(
-          <div className="kpi-card" key={k.l}>
-            <div className="kpi-label">{k.l}</div>
+          <div className={`kpi-card${k.c==="green"?" kpi-green":k.c==="red"?" kpi-red":k.c==="blue"?" kpi-blue":k.c==="amber"?" kpi-amber":""}`} key={k.l}>
+            <div className="kpi-label" style={{display:"flex",alignItems:"center",gap:4}}>
+              {k.l}
+              {k.note&&(
+                <span title={k.note} style={{cursor:"help",fontSize:10,color:"var(--text-quaternary)",fontWeight:700,lineHeight:1,background:"var(--fill2)",borderRadius:"50%",width:14,height:14,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</span>
+              )}
+            </div>
             <div className={`kpi-value t-num ${k.c==="amber"?"amber":k.c}`}>{k.v}</div>
             {k.b&&<div className={`kpi-badge ${k.b}`}>{k.bt}</div>}
+            {k.note&&<div style={{fontSize:10,color:"var(--text-quaternary)",marginTop:4,lineHeight:1.4,fontStyle:"italic"}}>{k.note}</div>}
           </div>
         ))}
       </div>
 
+      {/* TV-driven warning */}
+      {results.tvDriven&&(
+        <div className="info-banner info-amber" style={{marginBottom:14}}>
+          <span>⚠️</span>
+          <span><strong>NPV is driven primarily by terminal value.</strong> Operating cash flows alone do not recover the investment. TV contribution: <strong>{results.npv>0?pct((results.tvPV/results.npv)*100):"n/a"}</strong>. Consider whether the terminal value assumption is realistic.</span>
+        </div>
+      )}
+
       {/* Inflation note */}
       {Number(inputs.inflationRate)>0&&(
-        <div className="info-banner info-blue" style={{marginBottom:18}}>
+        <div className="info-banner info-blue" style={{marginBottom:14}}>
           <span>ℹ️</span>
-          <span>Inflation {inputs.inflationRate}% → Real WACC = <strong>{(((1+Number(inputs.discountRate)/100)/(1+Number(inputs.inflationRate)/100)-1)*100).toFixed(2)}%</strong> (Fisher equation). Nominal NPV <strong>{fmt(results.npv)}</strong> vs Real NPV <strong>{fmt(results.npvR)}</strong>.</span>
+          <span>
+            Inflation {inputs.inflationRate}% · Real WACC = <strong>{((results.realW||0)*100).toFixed(2)}%</strong> (Fisher).{" "}
+            NPV (Real) = <strong>{fmt(results.npvR)}</strong> · NPV (Nominal) = <strong>{fmt(results.npv)}</strong> — equal by Fisher identity (see <strong>?</strong> on NPV Real card).{" "}
+            Real IRR = <strong>{pct(results.realIRR!=null?results.realIRR*100:null)}</strong> vs Nominal IRR = <strong>{pct(results.irr!=null?results.irr*100:null)}</strong> — Real IRR is your return above inflation.
+          </span>
         </div>
       )}
 
       {results.tv>0&&(
-        <div className="info-banner info-green" style={{marginBottom:18}}>
+        <div className="info-banner info-green" style={{marginBottom:14}}>
           <span>🏁</span>
-          <span>Terminal value ({inputs.tvMethod==="perpetuity"?`Gordon Growth @ ${inputs.tvGrowth}%`:`EV Multiple ${inputs.evMult}×`}): <strong>{fmt(results.tv)}</strong> · PV of TV: <strong>{fmt(results.tvPV)}</strong></span>
+          <span>Terminal value ({inputs.tvMethod==="perpetuity"?`Gordon Growth @ ${inputs.tvGrowth}%`:`EV Multiple ${inputs.evMult}×`}): <strong>{fmt(results.tv)}</strong> · PV of TV: <strong>{fmt(results.tvPV)}</strong> · TV share of NPV: <strong>{results.npv>0?pct((results.tvPV/results.npv)*100):"n/a"}</strong></span>
         </div>
       )}
 
@@ -1565,13 +1772,6 @@ function OverviewTab({inputs,setI,results,totalYears}){
               <Inp label="WACC / Discount Rate" value={inputs.discountRate}   onChange={v=>setI("discountRate",v)}  suf="%" min={0.1} max={100} step={0.1}/>
               <Inp label="Corporate Tax Rate"   value={inputs.taxRate}         onChange={v=>setI("taxRate",v)}        suf="%" min={0} max={99} step={0.1}/>
               <Inp label="Inflation Rate"        value={inputs.inflationRate}  onChange={v=>setI("inflationRate",v)}  suf="%" min={0} max={50} step={0.1}/>
-              <div className="input-group">
-                <label className="input-label">Compounding</label>
-                <select className="select-field" value={inputs.compound||"annual"} onChange={e=>setI("compound",e.target.value)}>
-                  <option value="annual">Annual</option>
-                  <option value="monthly">Monthly</option>
-                </select>
-              </div>
             </div>
           </div>
         </div>
@@ -1616,13 +1816,13 @@ function OverviewTab({inputs,setI,results,totalYears}){
         </div>
       </div>
 
-      {/* Revenue overview chart */}
-      {sched.length>0&&(
+      {/* Revenue overview chart - only operation years */}
+      {sched.filter(r=>r.revenue>0).length>0&&(
         <div className="card" style={{marginTop:14}}>
           <div className="card-header"><div className="t-headline">Revenue & Net Income</div></div>
           <div style={{padding:"14px 16px 8px"}}>
             <ResponsiveContainer width="100%" height={220}>
-              <ComposedChart data={sched} margin={{top:5,right:16,left:0,bottom:0}}>
+              <ComposedChart data={sched.filter(r=>r.revenue>0)} margin={{top:5,right:16,left:0,bottom:0}}>
                 <defs>
                   <linearGradient id="gR" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="var(--blue)" stopOpacity={0.2}/><stop offset="95%" stopColor="var(--blue)" stopOpacity={0}/></linearGradient>
                 </defs>
@@ -1718,7 +1918,7 @@ function CapexTab({inputs,setI,results,totalYears}){
         <div className="card-header"><div className="t-headline">Depreciation Schedule</div></div>
         <div style={{overflowX:"auto"}}>
           <table className="data-table">
-            <thead><tr><th>Item</th>{yrs.map(yi=><th key={yi}>Yr {yi+1}</th>)}<th>Total</th></tr></thead>
+            <thead><tr><th>Item</th>{yrs.map(yi=><th key={yi}>Yr {yi+1}</th>)}<th>In-Period Total</th><th>Asset Cost</th></tr></thead>
             <tbody>
               {(inputs.capexRows||[]).filter(r=>r.on&&r.deprM!=="None").map((row,idx)=>{
                 const total=(row.amts||[]).reduce((a,b)=>a+(Number(b)||0),0);
@@ -1726,11 +1926,15 @@ function CapexTab({inputs,setI,results,totalYears}){
                 const ann=total/dy;
                 const st=(row.amts||[]).findIndex(a=>Number(a)>0);
                 const s=st>=0?st:0;
+                // Total depr that falls within the projection period
+                const periodsInProj=Math.min(s+dy,yrs.length)-s;
+                const inPeriodTotal=Math.max(0,periodsInProj)*ann;
                 return(
                   <tr key={idx}>
                     <td>{row.name}</td>
                     {yrs.map(yi=><td key={yi} style={{color:yi>=s&&yi<s+dy?"var(--blue)":"var(--text-quaternary)"}}>{yi>=s&&yi<s+dy?fmt(ann):"—"}</td>)}
-                    <td style={{fontWeight:600,color:"var(--amber)"}}>{fmt(ann*Math.min(dy,yrs-s))}</td>
+                    <td style={{fontWeight:600,color:"var(--amber)"}}>{fmt(inPeriodTotal)}</td>
+                    <td style={{color:"var(--text-tertiary)",fontSize:11}}>{fmt(total)}</td>
                   </tr>
                 );
               })}
@@ -1809,18 +2013,34 @@ function CostsTab({inputs,setI,results}){
 
   return(
     <div className="fade-up">
+      <div className="info-banner info-blue" style={{marginBottom:14}}>
+        <span>ℹ️</span>
+        <span><strong>P&L structure:</strong> Revenue − COGS = Gross Profit → GP − OpEx = EBITDA. Mark each cost line as COGS or OpEx. Payables and inventory days are applied to COGS only.</span>
+      </div>
       <div className="card" style={{marginBottom:14}}>
-        <div className="card-header"><div className="t-headline">Operating Cost Lines</div></div>
+        <div className="card-header">
+          <div className="t-headline">Cost Lines</div>
+          <div style={{fontSize:11,color:"var(--text-tertiary)"}}>Total Year 1 COGS: <strong style={{color:"var(--red)"}}>{fmt(results.sched.find(r=>r.cogs>0)?.cogs||0)}</strong> · OpEx: <strong style={{color:"var(--amber)"}}>{fmt(results.sched.find(r=>r.opex>0)?.opex||0)}</strong></div>
+        </div>
         <div className="card-body">
           {(inputs.costLines||[]).map((line,idx)=>(
             <div key={idx} style={{borderBottom:"1px solid var(--sep)",paddingBottom:14,marginBottom:14,opacity:line.on?1:0.45}}>
               <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
                 <button className={`toggle${line.on?" on":""}`} onClick={()=>upd(idx,"on",!line.on)}/>
                 <input value={line.name||""} onChange={e=>upd(idx,"name",e.target.value)}
-                  style={{flex:1,border:"1px solid var(--sep)",borderRadius:"var(--r-sm)",padding:"5px 10px",fontSize:14,fontFamily:"inherit",fontWeight:600,color:"var(--text-primary)",background:"var(--fill)",outline:"none"}}/>
+                  style={{flex:1,border:"1px solid var(--sep)",borderRadius:"var(--r-sm)",padding:"5px 10px",fontSize:14,fontFamily:"inherit",fontWeight:600,color:"var(--text-primary)",background:"var(--fill1)",outline:"none"}}/>
+                {/* COGS vs OpEx toggle — matches engine isCOGSLine() */}
+                <div style={{display:"flex",gap:0,border:"1px solid var(--sep)",borderRadius:"var(--r-sm)",overflow:"hidden",flexShrink:0}}>
+                  {(()=>{const isC=line.isCOGS===true||(line.isCOGS===undefined&&line.id===1);return(<>
+                    <button onClick={()=>upd(idx,"isCOGS",true)}
+                      style={{padding:"4px 9px",fontSize:11,fontWeight:600,border:"none",cursor:"pointer",fontFamily:"inherit",background:isC?"var(--red-bg)":"var(--fill1)",color:isC?"var(--red)":"var(--text-tertiary)"}}>COGS</button>
+                    <button onClick={()=>upd(idx,"isCOGS",false)}
+                      style={{padding:"4px 9px",fontSize:11,fontWeight:600,border:"none",cursor:"pointer",fontFamily:"inherit",background:!isC?"var(--amber-bg)":"var(--fill1)",color:!isC?"var(--amber)":"var(--text-tertiary)"}}>OpEx</button>
+                  </>);})()} 
+                </div>
                 <label style={{display:"flex",alignItems:"center",gap:5,fontSize:12,cursor:"pointer",color:"var(--text-secondary)",flexShrink:0}}>
                   <input type="checkbox" checked={!!line.pctRev} onChange={e=>upd(idx,"pctRev",e.target.checked)}/>
-                  % of Revenue
+                  % Rev
                 </label>
               </div>
               <div className="grid-3">
@@ -1837,7 +2057,7 @@ function CostsTab({inputs,setI,results}){
 
       {results.sched.filter(r=>r.revenue>0).length>0&&(
         <div className="card">
-          <div className="card-header"><div className="t-headline">Cost Structure</div></div>
+          <div className="card-header"><div className="t-headline">Cost Structure vs EBITDA</div></div>
           <div style={{padding:"12px 16px 8px"}}>
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={results.sched.filter(r=>r.revenue>0)} margin={{top:5,right:16,left:0,bottom:0}}>
@@ -1845,8 +2065,9 @@ function CostsTab({inputs,setI,results}){
                 <XAxis dataKey="year" tick={{fill:"var(--text-tertiary)",fontSize:11}} axisLine={false} tickLine={false}/>
                 <YAxis tickFormatter={v=>fmt(v)} tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false} width={60}/>
                 <Tooltip content={<ChartTip/>}/>
-                <Bar dataKey="costs" name="Total Costs" fill="var(--red)" radius={[4,4,0,0]} opacity={0.8}/>
-                <Bar dataKey="ebitda" name="EBITDA" fill="var(--green)" radius={[4,4,0,0]}/>
+                <Bar dataKey="cogs" name="COGS" fill="var(--red)" radius={[0,0,0,0]} opacity={0.8} stackId="costs"/>
+                <Bar dataKey="opex" name="OpEx" fill="var(--amber)" radius={[3,3,0,0]} opacity={0.8} stackId="costs"/>
+                <Bar dataKey="ebitda" name="EBITDA" fill="var(--green)" radius={[3,3,0,0]}/>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -1859,16 +2080,17 @@ function CostsTab({inputs,setI,results}){
 /* ══ WORKING CAPITAL TAB ═══════════════════════════════════════════════ */
 function WCTab({inputs,setI,results}){
   const{fmt}=useFmt();
-  const opsY=clamp(inputs.constructionYears,0,5);
-  const wcSched=results.sched.map((r,i)=>{
-    const rec=r.revenue*clamp(inputs.receivDays,0,365)/365;
-    const pay=r.costs*clamp(inputs.payablDays,0,365)/365;
-    const inv=r.costs*clamp(inputs.inventDays,0,365)/365;
-    const wc=rec+inv-pay;
-    const prevR=results.sched[i-1];
-    const prevWC=prevR?(prevR.revenue*clamp(inputs.receivDays,0,365)/365+prevR.costs*clamp(inputs.inventDays,0,365)/365-prevR.costs*clamp(inputs.payablDays,0,365)/365):0;
-    return{year:r.year,phase:r.phase,rec:Math.round(rec),pay:Math.round(pay),inv:Math.round(inv),wc:Math.round(wc),dwc:Math.round(wc-prevWC)};
-  });
+  // Use NWC values already computed in the engine (via sched.nwc and sched.wcChange)
+  // Reconstruct display values for the schedule table
+  const wcSched=results.sched.map(r=>({
+    year:r.year,
+    phase:r.phase,
+    rec:  Math.round(r.revenue*clamp(inputs.receivDays,0,365)/365),
+    inv:  Math.round(r.cogs*clamp(inputs.inventDays,0,365)/365),
+    pay:  Math.round(r.cogs*clamp(inputs.payablDays,0,365)/365),
+    wc:   r.nwc,
+    dwc:  r.wcChange, // from engine — single source of truth
+  }));
 
   return(
     <div className="fade-up">
@@ -1920,24 +2142,38 @@ function ResultsTab({inputs,results}){
 
   return(
     <div className="fade-up">
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:18}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:18}}>
         {[
-          {l:"NPV (Nominal)",  v:fmt(results.npv),              c:good?"green":"red",     b:good?"badge-green":"badge-red",  bt:good?"✓ Creates Value":"✗ Destroys Value"},
-          {l:"NPV (Real)",     v:fmt(results.npvR),             c:(results.npvR||0)>0?"green":"red"},
-          {l:"IRR",            v:pct(results.irr?results.irr*100:null), c:results.irr&&results.irr>inputs.discountRate/100?"green":"red"},
-          {l:"MIRR",           v:pct(results.mirr?results.mirr*100:null), c:""},
-          {l:"Payback",        v:results.pb>=0?`${results.pb} yrs`:">proj",c:""},
-          {l:"PI",             v:xN(results.pi),                c:results.pi>1?"green":"red"},
-          {l:"RONA",           v:pct((results.rona||0)*100),    c:""},
-          {l:"Total EVA",      v:fmt(results.totalEVA),         c:results.totalEVA>0?"green":"red"},
+          {l:"NPV (Nominal)",  v:fmt(results.npv),   c:good?"green":"red", b:good?"badge-green":"badge-red", bt:good?"✓ Creates Value":"✗ Destroys Value"},
+          {l:"NPV (Real)",     v:fmt(results.npvR),   c:(results.npvR||0)>0?"green":"red",
+            note:"Real and Nominal NPV are mathematically equal when inflation is applied consistently via the Fisher equation. This is expected and confirms model correctness."},
+          {l:"Real IRR",       v:pct(results.realIRR!=null?results.realIRR*100:null), c:results.realIRR!=null&&results.realIRR>0?"green":"red"},
+          {l:"IRR (Nominal)",  v:pct(results.irr!=null?results.irr*100:null),          c:results.irr!=null&&results.irr>inputs.discountRate/100?"green":"red"},
+          {l:"MIRR",           v:pct(results.mirr!=null?results.mirr*100:null),         c:""},
+          {l:"Payback",        v:results.pb>=0?`${results.pb} yrs`:"Beyond projection period", c:""},
+          {l:"PI",             v:xN(results.pi),      c:results.pi>1?"green":"red"},
+          {l:"RONA",           v:pct((results.rona||0)*100), c:""},
+          {l:"Total EVA",      v:fmt(results.totalEVA), c:results.totalEVA>0?"green":"red"},
         ].map(k=>(
           <div className="kpi-card" key={k.l}>
-            <div className="kpi-label">{k.l}</div>
-            <div className={`kpi-value t-num ${k.c==="amber"?"amber":k.c}`}>{k.v}</div>
+            <div className="kpi-label" style={{display:"flex",alignItems:"center",gap:4}}>
+              {k.l}
+              {k.note&&(
+                <span title={k.note} style={{cursor:"help",fontSize:10,color:"var(--text-quaternary)",fontWeight:700,lineHeight:1,background:"var(--fill2)",borderRadius:"50%",width:14,height:14,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</span>
+              )}
+            </div>
+            <div className={`kpi-value t-num ${k.c}`}>{k.v}</div>
             {k.b&&<div className={`kpi-badge ${k.b}`}>{k.bt}</div>}
+            {k.note&&<div style={{fontSize:10,color:"var(--text-quaternary)",marginTop:4,lineHeight:1.4,fontStyle:"italic"}}>{k.note}</div>}
           </div>
         ))}
       </div>
+
+      {results.tvDriven&&(
+        <div className="info-banner info-amber" style={{marginBottom:14}}>
+          <span>⚠️</span><span><strong>NPV is driven primarily by terminal value</strong> (TV share: {results.npv>0?pct((results.tvPV/results.npv)*100):"n/a"}). Operating FCFs alone do not recover the investment.</span>
+        </div>
+      )}
 
       {results.tv>0&&(
         <div className="info-banner info-green" style={{marginBottom:14}}>
@@ -1946,38 +2182,46 @@ function ResultsTab({inputs,results}){
         </div>
       )}
 
+      {/* Full P&L cascade — single source of truth from sched */}
       <div className="card" style={{marginBottom:14}}>
-        <div className="card-header"><div className="t-headline">Income Statement Summary</div></div>
+        <div className="card-header"><div className="t-headline">Income Statement — Full Cascade</div></div>
         <div style={{overflowX:"auto"}}>
           <table className="data-table">
             <thead>
               <tr>
-                <th style={{textAlign:"left"}}>Item</th>
+                <th style={{textAlign:"left"}}>Line Item</th>
                 {sched.map(r=><th key={r.year}><div>Yr {r.year}</div><div style={{marginTop:2}}>{r.phase==="Construction"?<span className="phase-c">C</span>:<span className="phase-o">O</span>}</div></th>)}
                 <th>Total</th>
               </tr>
             </thead>
             <tbody>
               {[
-                {l:"Revenue",      k:"revenue",   c:"var(--blue)"},
-                {l:"Total Costs",  k:"costs",     c:"var(--red)"},
-                {l:"Gross Profit", k:"grossProfit",c:""},
-                {l:"EBITDA",       k:"ebitda",    c:""},
-                {l:"Depreciation", k:"depreciation",c:"var(--text-tertiary)"},
-                {l:"EBIT",         k:"ebit",      c:""},
-                {l:"Interest",     k:"interest",  c:"var(--text-tertiary)"},
-                {l:"Net Income",   k:"netIncome", c:"var(--blue)",bold:true},
-                {l:"FCF",          k:"fcf",       c:"var(--green)",bold:true},
-                {l:"EVA",          k:"eva",       c:"var(--amber)"},
+                {l:"Revenue",          k:"revenue",      c:"var(--blue)",bold:false},
+                {l:"− COGS",           k:"cogs",         c:"var(--red)",  neg:true},
+                {l:"= Gross Profit",   k:"grossProfit",  c:"",            bold:true,sep:true},
+                {l:"− Operating Exp.", k:"opex",         c:"var(--red)",  neg:true},
+                {l:"= EBITDA",         k:"ebitda",       c:"",            bold:true,sep:true},
+                {l:"− Depreciation",   k:"depreciation", c:"var(--text-tertiary)",neg:true},
+                {l:"= EBIT",           k:"ebit",         c:"",            bold:true,sep:true},
+                {l:"− Interest",       k:"interest",     c:"var(--text-tertiary)",neg:true},
+                {l:"= EBT",            k:"ebt",          c:""},
+                {l:"− Tax",            k:"tax",          c:"var(--text-tertiary)",neg:true},
+                {l:"= Net Income",     k:"netIncome",    c:"var(--blue)", bold:true,sep:true},
+                {l:"FCF",              k:"fcf",          c:"var(--green)",bold:true},
+                {l:"EVA",              k:"eva",          c:"var(--amber)"},
               ].map(row=>{
                 const tot=sched.reduce((s,r)=>s+(r[row.k]||0),0);
                 return(
-                  <tr key={row.l}>
-                    <td style={{fontWeight:row.bold?700:500}}>{row.l}</td>
-                    {sched.map(r=>(
-                      <td key={r.year} style={{color:(r[row.k]||0)<0?"var(--red)":(row.c||"var(--text-primary)"),fontWeight:row.bold?600:400}}>{fmt(r[row.k]||0)}</td>
-                    ))}
-                    <td style={{fontWeight:700,color:tot<0?"var(--red)":(row.c||"var(--text-primary)")}}>{fmt(tot)}</td>
+                  <tr key={row.l} style={{borderTop:row.sep?"2px solid var(--sep)":"none"}}>
+                    <td style={{fontWeight:row.bold?700:500,paddingLeft:row.neg?20:12}}>{row.l}</td>
+                    {sched.map(r=>{
+                      const v=r[row.k]||0;
+                      const display=row.neg?-v:v;
+                      return(
+                        <td key={r.year} style={{color:display<0?"var(--red)":(row.c||"var(--text-primary)"),fontWeight:row.bold?600:400}}>{fmt(display)}</td>
+                      );
+                    })}
+                    {(()=>{const display=row.neg?-tot:tot;return<td style={{fontWeight:700,color:display<0?"var(--red)":(row.c||"var(--text-primary)")}}>{fmt(display)}</td>;})()} 
                   </tr>
                 );
               })}
@@ -2027,7 +2271,11 @@ function ResultsTab({inputs,results}){
 function CashFlowTab({results}){
   const{fmt}=useFmt();
   const{sched}=results;
-  let cum=-results.totCapex;
+
+  // Cumulative undiscounted cash flow starting from -totCapex
+  const cumRows=[];
+  let cumCF=-results.totCapex;
+  sched.forEach(r=>{cumCF+=r.fcf;cumRows.push(Math.round(cumCF));});
 
   return(
     <div className="fade-up">
@@ -2037,58 +2285,78 @@ function CashFlowTab({results}){
           {l:"Total Revenue",v:fmt(results.totRev),c:""},
           {l:"Total CAPEX",  v:fmt(results.totCapex),c:"amber"},
         ].map(k=>(
-          <div className="kpi-card" key={k.l}><div className="kpi-label">{k.l}</div><div className={`kpi-value t-num ${k.c==="amber"?"amber":k.c}`}>{k.v}</div></div>
+          <div className={`kpi-card${k.c==="amber"?" kpi-amber":k.c==="green"?" kpi-green":k.c==="red"?" kpi-red":""}`} key={k.l}>
+            <div className="kpi-label">{k.l}</div>
+            <div className={`kpi-value t-num ${k.c==="amber"?"amber":k.c}`}>{k.v}</div>
+          </div>
         ))}
       </div>
+
+      <div className="info-banner info-blue" style={{marginBottom:14}}>
+        <span>ℹ️</span>
+        <span>FCF = EBIT × (1−tax) + Depreciation − CAPEX − ΔNWC. This is unlevered (operating) free cash flow — independent of financing. Interest is shown for reference only.</span>
+      </div>
+
       <div className="card" style={{marginBottom:14}}>
-        <div className="card-header"><div className="t-headline">Cash Flow Statement</div></div>
+        <div className="card-header"><div className="t-headline">Free Cash Flow Bridge</div></div>
         <div style={{overflowX:"auto"}}>
           <table className="data-table">
             <thead><tr><th>Item</th>{sched.map(r=><th key={r.year}>Yr {r.year}</th>)}<th>Total</th></tr></thead>
             <tbody>
               {[
-                {l:"Revenue",           k:"revenue",   neg:false},
-                {l:"Operating Costs",   k:"costs",     neg:true},
-                {l:"EBITDA",            k:"ebitda",    bold:true},
-                {l:"Interest Paid",     k:"interest",  neg:true,c:"var(--text-tertiary)"},
-                {l:"Net Income",        k:"netIncome", bold:true,c:"var(--blue)"},
-                {l:"(+) Depreciation",  k:"depreciation",c:"var(--text-tertiary)"},
-                {l:"(−) CAPEX",         k:"capex",     neg:true,c:"var(--red)"},
-                {l:"(−) ΔWorking Cap",  k:"wcChange",  neg:true,c:"var(--amber)"},
-                {l:"Free Cash Flow",    k:"fcf",       bold:true,c:"var(--green)",total:true},
+                {l:"Revenue",               k:"revenue",     neg:false},
+                {l:"− COGS",                k:"cogs",        neg:true, c:"var(--text-secondary)"},
+                {l:"= Gross Profit",        k:"grossProfit", neg:false, bold:true},
+                {l:"− Operating Expenses",  k:"opex",        neg:true, c:"var(--text-secondary)"},
+                {l:"= EBITDA",              k:"ebitda",      neg:false, bold:true,sep:true},
+                {l:"− Depreciation",        k:"depreciation",neg:true, c:"var(--text-tertiary)"},
+                {l:"= EBIT",                k:"ebit",        neg:false, bold:true,sep:true},
+                {l:"× (1−tax) = NOPAT",    k:"nopat",       neg:false, c:"var(--blue)"},
+                {l:"+ Depreciation (add back)",k:"depreciation",neg:false,c:"var(--text-tertiary)"},
+                {l:"− CAPEX",               k:"capex",       neg:true, c:"var(--red)"},
+                {l:"− ΔNWC",                k:"wcChange",    neg:true, c:"var(--amber)"},
+                {l:"= Free Cash Flow",      k:"fcf",         neg:false, bold:true,c:"var(--green)",total:true,sep:true},
               ].map(row=>{
                 const vals=sched.map(r=>row.neg?-(r[row.k]||0):(r[row.k]||0));
                 const tot=vals.reduce((a,b)=>a+b,0);
                 return(
-                  <tr key={row.l} className={row.total?"total-row":""}>
-                    <td style={{fontWeight:row.bold?700:500}}>{row.l}</td>
+                  <tr key={row.l} className={row.total?"total-row":""} style={{borderTop:row.sep?"2px solid var(--sep)":"none"}}>
+                    <td style={{fontWeight:row.bold?700:400,paddingLeft:row.neg?20:12,fontSize:row.bold?13:12}}>{row.l}</td>
                     {vals.map((v,i)=><td key={i} style={{color:v<0?"var(--red)":(row.c||"var(--text-primary)"),fontWeight:row.bold?600:400}}>{fmt(v)}</td>)}
                     <td style={{fontWeight:700,color:tot<0?"var(--red)":(row.c||"var(--text-primary)")}}>{fmt(tot)}</td>
                   </tr>
                 );
               })}
+              {/* Interest for reference only */}
+              <tr style={{background:"var(--fill1)"}}>
+                <td style={{fontWeight:400,fontSize:11,color:"var(--text-tertiary)",paddingLeft:12,fontStyle:"italic"}}>Interest paid (memo)</td>
+                {sched.map(r=><td key={r.year} style={{color:"var(--text-tertiary)",fontSize:11,fontStyle:"italic"}}>{r.interest>0?fmt(-r.interest):fmt(0)}</td>)}
+                <td style={{color:"var(--text-tertiary)",fontSize:11}}>{fmt(-sched.reduce((s,r)=>s+r.interest,0))}</td>
+              </tr>
+              {/* Cumulative cash flow */}
               <tr>
-                <td style={{fontWeight:700,color:"var(--blue)"}}>Cumulative CF</td>
-                {sched.map(r=>{cum+=r.fcf;return<td key={r.year} style={{fontWeight:600,color:cum>=0?"var(--green)":"var(--red)"}}>{fmt(cum)}</td>;})}
+                <td style={{fontWeight:700,color:"var(--blue)"}}>Cumulative CF (incl. CAPEX)</td>
+                {cumRows.map((v,i)=><td key={i} style={{fontWeight:600,color:v>=0?"var(--green)":"var(--red)"}}>{fmt(v)}</td>)}
                 <td/>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
+
       <div className="card">
         <div className="card-header"><div className="t-headline">FCF & Cumulative NPV</div></div>
         <div style={{padding:"12px 16px 8px"}}>
           <ResponsiveContainer width="100%" height={220}>
             <ComposedChart data={sched} margin={{top:5,right:12,left:0,bottom:0}}>
-              <defs><linearGradient id="gCum" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="var(--purple,#5856d6)" stopOpacity={0.2}/><stop offset="95%" stopColor="var(--purple,#5856d6)" stopOpacity={0}/></linearGradient></defs>
+              <defs><linearGradient id="gCum2" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#5856d6" stopOpacity={0.2}/><stop offset="95%" stopColor="#5856d6" stopOpacity={0}/></linearGradient></defs>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--sep)" vertical={false}/>
               <XAxis dataKey="year" tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false}/>
               <YAxis tickFormatter={v=>fmt(v)} tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false} width={60}/>
               <Tooltip content={<ChartTip/>}/>
               <ReferenceLine y={0} stroke="var(--sep)" strokeDasharray="4 2"/>
               <Bar dataKey="fcf" name="Annual FCF" fill="var(--green)" radius={[4,4,0,0]}/>
-              <Area type="monotone" dataKey="cumNPV" name="Cumulative NPV" stroke="#5856d6" fill="url(#gCum)" strokeWidth={2}/>
+              <Area type="monotone" dataKey="cumNPV" name="Cumulative NPV" stroke="#5856d6" fill="url(#gCum2)" strokeWidth={2}/>
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -2103,42 +2371,61 @@ function SensitivityTab({inputs,results}){
   const[view,setView]=useState("heatmap");
   const[beKey,setBeKey]=useState("discountRate");
 
-  const vars=[
-    {key:"discountRate",   label:"WACC",          base:Number(inputs.discountRate),  suf:"%"},
-    {key:"taxRate",        label:"Tax Rate",       base:Number(inputs.taxRate),       suf:"%"},
-    {key:"inflationRate",  label:"Inflation",      base:Number(inputs.inflationRate), suf:"%"},
-    {key:"tvGrowth",       label:"Terminal Growth",base:Number(inputs.tvGrowth||2),   suf:"%"},
-    {key:"intRate",        label:"Interest Rate",  base:Number(inputs.intRate),       suf:"%"},
-    {key:"operationYears", label:"Op. Years",      base:Number(inputs.operationYears), suf:"yr"},
-  ];
+  // Use safe non-zero bases: if base=0 use a small delta-based approach
+  const vars=useMemo(()=>[
+    {key:"discountRate",   label:"WACC",           base:Math.max(1,Number(inputs.discountRate)),    suf:"%"},
+    {key:"taxRate",        label:"Tax Rate",        base:Math.max(1,Number(inputs.taxRate)),         suf:"%"},
+    {key:"inflationRate",  label:"Inflation",       base:Math.max(0.5,Number(inputs.inflationRate)), suf:"%"},
+    {key:"tvGrowth",       label:"Terminal Growth", base:Math.max(0.5,Number(inputs.tvGrowth||2)),   suf:"%"},
+    {key:"intRate",        label:"Interest Rate",   base:Math.max(1,Number(inputs.intRate)),         suf:"%"},
+    {key:"operationYears", label:"Op. Years",       base:Math.max(1,Number(inputs.operationYears)),  suf:"yr"},
+  ],[inputs]);
 
   const steps=[-30,-20,-10,0,10,20,30];
 
-  const heatData=vars.map(v=>{
+  // Memoize heatData to avoid recomputing on every render
+  const heatData=useMemo(()=>vars.map(v=>{
     const row={label:v.label};
     steps.forEach(s=>{
-      const nv=v.base*(1+s/100);
-      const npv=calcFinancials({...DEF,...inputs,[v.key]:nv}).npv;
-      row[`s${s}`]=Math.round(npv);
+      try{
+        const nv=v.base*(1+s/100);
+        const safeNv=v.key==="operationYears"?Math.max(1,Math.round(nv)):Math.max(0.1,nv);
+        const res=calcFinancials({...DEF,...inputs,[v.key]:safeNv});
+        row[`s${s}`]=isFinite(res.npv)?Math.round(res.npv):null;
+      }catch{row[`s${s}`]=null;}
     });
     return row;
-  });
+  }),[inputs,vars]);
 
-  const allVals=heatData.flatMap(r=>steps.map(s=>r[`s${s}`]));
-  const hMin=Math.min(...allVals.filter(isFinite));
-  const hMax=Math.max(...allVals.filter(isFinite));
+  const allVals=heatData.flatMap(r=>steps.map(s=>r[`s${s}`])).filter(v=>v!=null&&isFinite(v));
+  const hMin=allVals.length?Math.min(...allVals):0;
+  const hMax=allVals.length?Math.max(...allVals):0;
 
-  const tornado=vars.map(v=>{
-    const lo=calcFinancials({...DEF,...inputs,[v.key]:v.base*0.8}).npv;
-    const hi=calcFinancials({...DEF,...inputs,[v.key]:v.base*1.2}).npv;
-    return{label:v.label,lo:Math.min(lo,hi),hi:Math.max(lo,hi),impact:Math.abs(hi-lo)};
-  }).sort((a,b)=>b.impact-a.impact);
+  // Memoize tornado (also expensive)
+  const tornado=useMemo(()=>vars.map(v=>{
+    try{
+      const lo=calcFinancials({...DEF,...inputs,[v.key]:Math.max(0.1,v.base*0.8)}).npv;
+      const hi=calcFinancials({...DEF,...inputs,[v.key]:v.base*1.2}).npv;
+      const safeLo=isFinite(lo)?lo:0;
+      const safeHi=isFinite(hi)?hi:0;
+      return{label:v.label,lo:Math.min(safeLo,safeHi),hi:Math.max(safeLo,safeHi),impact:Math.abs(safeHi-safeLo)};
+    }catch{return{label:v.label,lo:0,hi:0,impact:0};}
+  }).sort((a,b)=>b.impact-a.impact),[inputs,vars]);
 
   const beResult=useMemo(()=>doBreakEven({...DEF,...inputs},beKey),[inputs,beKey]);
   const beVar=vars.find(v=>v.key===beKey)||vars[0];
 
-  const hBg=(v,mn,mx)=>{if(!isFinite(v)) return"var(--fill)";const t=mx===mn?0.5:(v-mn)/(mx-mn);if(t<0.5) return`rgba(255,59,48,${0.08+t*0.3})`;return`rgba(52,199,89,${0.05+(t-0.5)*0.5})`;};
-  const hFg=(v,mn,mx)=>{if(!isFinite(v)) return"var(--text-tertiary)";const t=mx===mn?0.5:(v-mn)/(mx-mn);return t<0.3?"var(--red)":t>0.7?"var(--green)":"var(--text-primary)";};
+  const hBg=(v,mn,mx)=>{
+    if(v==null||!isFinite(v)) return"var(--fill1)";
+    const t=mx===mn?0.5:(v-mn)/(mx-mn);
+    if(t<0.5) return`rgba(255,59,48,${0.06+t*0.28})`;
+    return`rgba(52,199,89,${0.04+(t-0.5)*0.45})`;
+  };
+  const hFg=(v,mn,mx)=>{
+    if(v==null||!isFinite(v)) return"var(--text-tertiary)";
+    const t=mx===mn?0.5:(v-mn)/(mx-mn);
+    return t<0.3?"var(--red)":t>0.7?"var(--green)":"var(--text-primary)";
+  };
 
   return(
     <div className="fade-up">
@@ -2152,14 +2439,14 @@ function SensitivityTab({inputs,results}){
         <div className="card">
           <div className="card-header">
             <div className="t-headline">NPV Sensitivity — % change from base inputs</div>
-            <div className="t-footnote">Green = higher NPV · Red = lower NPV · Bold = base case</div>
+            <div className="t-footnote">Green = higher NPV · Red = lower NPV · Outlined = base case</div>
           </div>
           <div style={{overflowX:"auto",padding:16}}>
             <table style={{borderCollapse:"collapse",fontSize:12,width:"100%"}}>
               <thead>
                 <tr>
-                  <th style={{padding:"8px 12px",textAlign:"left",background:"var(--fill)",fontWeight:600,fontSize:11,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.3px",borderBottom:"1px solid var(--sep)"}}>Variable</th>
-                  {steps.map(s=><th key={s} style={{padding:"8px 10px",textAlign:"center",background:"var(--fill)",fontWeight:600,fontSize:11,color:"var(--text-tertiary)",borderBottom:"1px solid var(--sep)",minWidth:80}}>{s>0?"+":""}{s}%</th>)}
+                  <th style={{padding:"8px 12px",textAlign:"left",background:"var(--fill1)",fontWeight:600,fontSize:11,color:"var(--text-tertiary)",textTransform:"uppercase",letterSpacing:"0.3px",borderBottom:"1px solid var(--sep)"}}>Variable</th>
+                  {steps.map(s=><th key={s} style={{padding:"8px 10px",textAlign:"center",background:"var(--fill1)",fontWeight:600,fontSize:11,color:"var(--text-tertiary)",borderBottom:"1px solid var(--sep)",minWidth:80}}>{s>0?"+":""}{s}%</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -2167,8 +2454,8 @@ function SensitivityTab({inputs,results}){
                   <tr key={row.label}>
                     <td style={{padding:"7px 12px",fontWeight:600,fontSize:12,borderBottom:"1px solid var(--sep)",color:"var(--text-secondary)",whiteSpace:"nowrap"}}>{row.label}</td>
                     {steps.map(s=>(
-                      <td key={s} style={{padding:"6px 8px",borderBottom:"1px solid var(--sep)",textAlign:"center",background:hBg(row[`s${s}`],hMin,hMax),color:hFg(row[`s${s}`],hMin,hMax),fontWeight:s===0?700:500,border:s===0?"2px solid var(--blue)":"",borderRadius:s===0?4:0,fontVariantNumeric:"tabular-nums"}}>
-                        {fmt(row[`s${s}`])}
+                      <td key={s} style={{padding:"6px 8px",borderBottom:"1px solid var(--sep)",textAlign:"center",background:hBg(row[`s${s}`],hMin,hMax),color:hFg(row[`s${s}`],hMin,hMax),fontWeight:s===0?700:500,outline:s===0?"2px solid var(--blue)":"none",outlineOffset:"-2px",fontVariantNumeric:"tabular-nums"}}>
+                        {row[`s${s}`]!=null?fmt(row[`s${s}`]):"—"}
                       </td>
                     ))}
                   </tr>
@@ -2183,7 +2470,7 @@ function SensitivityTab({inputs,results}){
         <div className="card">
           <div className="card-header">
             <div className="t-headline">Tornado Chart — NPV impact of ±20% change</div>
-            <div className="t-footnote">Sorted by impact magnitude</div>
+            <div className="t-footnote">Sorted by magnitude of impact</div>
           </div>
           <div className="card-body">
             {tornado.map(item=>{
@@ -2196,13 +2483,13 @@ function SensitivityTab({inputs,results}){
                     <span style={{fontSize:13,fontWeight:600,color:"var(--text-primary)"}}>{item.label}</span>
                     <span style={{fontSize:11,color:"var(--text-tertiary)"}}>{fmt(item.lo)} → {fmt(item.hi)} <strong style={{color:"var(--amber)"}}>Δ{fmt(item.impact)}</strong></span>
                   </div>
-                  <div style={{display:"flex",height:28,borderRadius:6,overflow:"hidden",background:"var(--fill)",alignItems:"stretch"}}>
+                  <div style={{display:"flex",height:28,borderRadius:6,overflow:"hidden",background:"var(--fill1)",alignItems:"stretch"}}>
                     <div style={{flex:1,display:"flex",justifyContent:"flex-end"}}>
-                      <div style={{width:`${loW}%`,background:"var(--red)",opacity:0.7,transition:"width 0.4s",borderRadius:"4px 0 0 4px"}}/>
+                      <div style={{width:`${Math.max(0,loW)}%`,background:"var(--red)",opacity:0.7,transition:"width 0.4s",borderRadius:"4px 0 0 4px"}}/>
                     </div>
                     <div style={{width:2,background:"var(--sep)"}}/>
                     <div style={{flex:1}}>
-                      <div style={{width:`${hiW}%`,height:"100%",background:"var(--green)",opacity:0.7,transition:"width 0.4s",borderRadius:"0 4px 4px 0"}}/>
+                      <div style={{width:`${Math.max(0,hiW)}%`,height:"100%",background:"var(--green)",opacity:0.7,transition:"width 0.4s",borderRadius:"0 4px 4px 0"}}/>
                     </div>
                   </div>
                 </div>
@@ -2234,10 +2521,12 @@ function SensitivityTab({inputs,results}){
                 </div>
                 {(()=>{
                   const pts=Array.from({length:21},(_,i)=>{
-                    const v=beVar.base*(0.5+i*0.05);
-                    const npv=calcFinancials({...DEF,...inputs,[beKey]:v}).npv;
-                    return{value:Math.round(v*100)/100,npv:Math.round(npv)};
-                  });
+                    try{
+                      const v=Math.max(0.1,beVar.base*(0.5+i*0.05));
+                      const npv=calcFinancials({...DEF,...inputs,[beKey]:v}).npv;
+                      return{value:Math.round(v*100)/100,npv:isFinite(npv)?Math.round(npv):null};
+                    }catch{return{value:0,npv:null};}
+                  }).filter(p=>p.npv!=null);
                   return(
                     <ResponsiveContainer width="100%" height={200}>
                       <LineChart data={pts} margin={{top:5,right:12,left:0,bottom:0}}>
@@ -2246,16 +2535,16 @@ function SensitivityTab({inputs,results}){
                         <YAxis tickFormatter={v=>fmt(v)} tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false} width={60}/>
                         <Tooltip formatter={(v,n)=>[fmt(v),n]} labelFormatter={v=>`${beVar.label}: ${v}${beVar.suf}`}/>
                         <ReferenceLine y={0} stroke="var(--red)" strokeDasharray="5 3"/>
-                        {beResult&&<ReferenceLine x={Math.round(beResult*100)/100} stroke="var(--green)" strokeDasharray="5 3"/>}
-                        <Line type="monotone" dataKey="npv" stroke="var(--blue)" strokeWidth={2.5} dot={false} name="NPV"/>
+                        {beResult!=null&&<ReferenceLine x={Math.round(beResult*100)/100} stroke="var(--green)" strokeDasharray="5 3"/>}
+                        <Line type="monotone" dataKey="npv" stroke="var(--blue)" strokeWidth={2.5} dot={false} name="NPV" connectNulls={false}/>
                       </LineChart>
                     </ResponsiveContainer>
                   );
                 })()}
               </>
             ):(
-              <div className="info-banner info-orange">
-                <span>⚠️</span><span>No break-even found in feasible range for this variable. The NPV may always be positive or always negative.</span>
+              <div className="info-banner info-amber">
+                <span>⚠️</span><span>No break-even found in the feasible range for <strong>{beVar.label}</strong>. NPV may be positive or negative throughout the entire range — check if revenue covers costs.</span>
               </div>
             )}
           </div>
@@ -2281,10 +2570,11 @@ function ScenariosTab({inputs,scenario,applyScenario}){
     {l:"Inflation",k:"inflationRate",suf:"%",src:"ovr"},
     {l:"Op. Years",k:"operationYears",suf:"yr",src:"ovr"},
     {l:"NPV",k:"npv",fmt:"money",src:"r"},
-    {l:"NPV (Real)",k:"npvR",fmt:"money",src:"r"},
-    {l:"IRR",k:"irr",fmt:"pct100",src:"r"},
+    {l:"NPV (Real)",k:"npvR",fmt:"money",src:"r",note:true},
+    {l:"Real IRR",k:"realIRR",fmt:"pct100",src:"r"},
+    {l:"IRR (Nominal)",k:"irr",fmt:"pct100",src:"r"},
     {l:"MIRR",k:"mirr",fmt:"pct100",src:"r"},
-    {l:"Payback",k:"pb",suf:"yr",src:"r"},
+    {l:"Payback",k:"pb",suf:"yr",src:"r",fmt:"pb"},
     {l:"PI",k:"pi",fmt:"x",src:"r"},
     {l:"RONA",k:"rona",fmt:"pct100",src:"r"},
   ];
@@ -2313,13 +2603,22 @@ function ScenariosTab({inputs,scenario,applyScenario}){
             <tbody>
               {metrics.map(m=>(
                 <tr key={m.l}>
-                  <td style={{fontWeight:500}}>{m.l}</td>
+                  <td style={{fontWeight:500}}>
+                    <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
+                      {m.l}
+                      {m.note&&(
+                        <span title="Real and Nominal NPV are mathematically equal when inflation is applied consistently via the Fisher equation. This is expected and confirms model correctness."
+                          style={{cursor:"help",fontSize:10,color:"var(--text-quaternary)",fontWeight:700,lineHeight:1,background:"var(--fill2)",borderRadius:"50%",width:14,height:14,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</span>
+                      )}
+                    </span>
+                  </td>
                   {scenResults.map(s=>{
                     const raw=m.src==="r"?s.r[m.k]:(s.ovr[m.k]??inputs[m.k]);
                     let display,color="var(--text-primary)";
                     if(m.fmt==="money"){display=fmt(raw||0);color=(raw||0)>=0?"var(--green)":"var(--red)";}
-                    else if(m.fmt==="pct100"){display=pct(raw?raw*100:null);color=(raw||0)>0?"var(--green)":"var(--text-tertiary)";}
+                    else if(m.fmt==="pct100"){display=pct(raw!=null?raw*100:null);color=(raw||0)>0?"var(--green)":"var(--text-tertiary)";}
                     else if(m.fmt==="x"){display=xN(raw||0);color=(raw||0)>1?"var(--green)":"var(--red)";}
+                    else if(m.fmt==="pb"){display=raw>=0?`${raw}yr`:"—";color="var(--text-primary)";}
                     else display=`${raw??"-"}${m.suf||""}`;
                     return<td key={s.name} style={{color,fontWeight:s.name===scenario?700:400,fontVariantNumeric:"tabular-nums"}}>{display}</td>;
                   })}
@@ -2398,8 +2697,8 @@ function ProposalTab({inputs,results,projName}){
         <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",borderTop:"1px solid var(--sep)"}}>
           {[
             {l:"NPV",    v:fmt(results.npv),        c:good?"var(--green)":"var(--red)"},
-            {l:"IRR",    v:pct(results.irr?results.irr*100:null), c:"var(--text-primary)"},
-            {l:"Payback",v:results.pb>=0?`${results.pb} yrs`:">proj",c:"var(--text-primary)"},
+            {l:"IRR",    v:pct(results.irr!=null?results.irr*100:null), c:"var(--text-primary)"},
+            {l:"Payback",v:results.pb>=0?`${results.pb} yrs`:"—",c:"var(--text-primary)"},
             {l:"PI",     v:xN(results.pi),           c:results.pi>1?"var(--green)":"var(--red)"},
           ].map((k,i)=>(
             <div key={k.l} style={{padding:"14px 18px",borderRight:i<3?"1px solid var(--sep)":"none"}}>
@@ -2412,7 +2711,7 @@ function ProposalTab({inputs,results,projName}){
 
       {[
         {n:"01",title:"Executive Summary",content:
-          `This investment proposal analyses the financial viability of "${projName}". The project spans ${opsY>0?`a ${opsY}-year construction phase followed by `:""}a ${clamp(inputs.operationYears,1,30)}-year operation phase.\n\nAt a discount rate (WACC) of ${inputs.discountRate}% and corporate tax rate of ${inputs.taxRate}%, the analysis returns a Net Present Value (NPV) of ${fmt(results.npv)}${Number(inputs.inflationRate)>0?` (real NPV: ${fmt(results.npvR)} after ${inputs.inflationRate}% inflation adjustment using the Fisher equation)`:""}. The IRR is ${pct(results.irr?results.irr*100:null)}, ${results.irr&&results.irr>inputs.discountRate/100?`exceeding the cost of capital by ${((results.irr-inputs.discountRate/100)*100).toFixed(1)} percentage points`:`below the required WACC of ${inputs.discountRate}%`}.\n\n${good?"✅ RECOMMENDATION: PROCEED WITH INVESTMENT":"⚠️ RECOMMENDATION: REVISE AND RESUBMIT"}`
+          `This investment proposal analyses the financial viability of "${projName}". The project spans ${opsY>0?`a ${opsY}-year construction phase followed by `:""}a ${clamp(inputs.operationYears,1,30)}-year operation phase.\n\nAt a discount rate (WACC) of ${inputs.discountRate}% and corporate tax rate of ${inputs.taxRate}%, the analysis returns a Net Present Value (NPV) of ${fmt(results.npv)}${Number(inputs.inflationRate)>0?`. Real IRR: ${pct(results.realIRR!=null?results.realIRR*100:null)} (return above ${inputs.inflationRate}% inflation; real WACC = ${((results.realW||0)*100).toFixed(2)}% via Fisher equation)`:""}.The nominal IRR is ${pct(results.irr!=null?results.irr*100:null)}, ${results.irr!=null&&results.irr>inputs.discountRate/100?`exceeding the cost of capital by ${((results.irr-inputs.discountRate/100)*100).toFixed(1)} percentage points`:`below the required WACC of ${inputs.discountRate}%`}.\n\n${good?"✅ RECOMMENDATION: PROCEED WITH INVESTMENT":"⚠️ RECOMMENDATION: REVISE AND RESUBMIT"}`
         },
         {n:"02",title:"Investment Overview",rows:[
           {l:"Project Name",v:projName},{l:"Analysis Date",v:today},{l:"Currency",v:code},
@@ -2424,7 +2723,7 @@ function ProposalTab({inputs,results,projName}){
         {n:"03",title:"Financial Results",rows:[
           {l:"NPV (Nominal)",v:fmt(results.npv),h:true},{l:"NPV (Real)",v:fmt(results.npvR),h:true},
           {l:"IRR",v:pct(results.irr?results.irr*100:null),h:true},{l:"MIRR",v:pct(results.mirr?results.mirr*100:null)},
-          {l:"Payback Period",v:results.pb>=0?`${results.pb} years`:">projection"},{l:"PI",v:xN(results.pi)},
+          {l:"Payback Period",v:results.pb>=0?`${results.pb} years`:"Beyond projection period"},{l:"PI",v:xN(results.pi)},
           {l:"RONA",v:pct((results.rona||0)*100)},{l:"Total EVA",v:fmt(results.totalEVA)},
           {l:"Terminal Value",v:fmt(results.tv)},{l:"PV of Terminal Value",v:fmt(results.tvPV)},
         ]},
@@ -2433,7 +2732,7 @@ function ProposalTab({inputs,results,projName}){
         },
         {n:"05",title:"Recommendation",content:
           good
-            ? `✅ RECOMMENDED FOR APPROVAL\n\nNPV of ${fmt(results.npv)} confirms value creation above the cost of capital.\nIRR of ${pct(results.irr?results.irr*100:null)} ${results.irr&&results.irr>inputs.discountRate/100?`exceeds WACC by ${((results.irr-inputs.discountRate/100)*100).toFixed(1)}pp`:""}\nPayback of ${results.pb>=0?`${results.pb} years`:"beyond projection"} is within acceptable range.\nProfitability Index ${xN(results.pi)} indicates efficient capital utilisation.\n\nPROCEED WITH INVESTMENT.`
+            ? `✅ RECOMMENDED FOR APPROVAL\n\nNPV of ${fmt(results.npv)} confirms value creation above the cost of capital.\nIRR of ${pct(results.irr!=null?results.irr*100:null)} ${results.irr!=null&&results.irr>inputs.discountRate/100?`exceeds WACC by ${((results.irr-inputs.discountRate/100)*100).toFixed(1)}pp`:""}\nPayback of ${results.pb>=0?`${results.pb} years`:"beyond projection"} is within acceptable range.\nProfitability Index ${xN(results.pi)} indicates efficient capital utilisation.\n\nPROCEED WITH INVESTMENT.`
             : `⚠️ REVISE AND RESUBMIT\n\nNPV of ${fmt(results.npv)} indicates value destruction at current assumptions.\n\nRecommended actions:\n1. Review revenue assumptions for realism.\n2. Reduce CAPEX or phase investment differently.\n3. Refinance debt to lower interest burden.\n4. Extend operation period to improve return.\n5. Explore tax optimisation opportunities.`
         },
       ].map((sec,i)=>(
