@@ -264,50 +264,30 @@ function calcFinancials(raw){
   }
   const npv=Math.round(npvNom);
 
-  // ── 10. REAL NPV (per spec: deflate FCFs, discount at real WACC) ─────
+  // ── 10. REAL NPV ──────────────────────────────────────────────────────
   //
-  // Real WACC  (Fisher):  r_real = (1 + r_nom) / (1 + π) − 1
-  // Real FCF_t (deflate): Real_FCF_t = Nominal_FCF_t / (1 + π)^t
-  // Real NPV:             −C0 + Σ Real_FCF_t / (1 + r_real)^t
+  // Real WACC (Fisher): r_real = (1 + r_nom) / (1 + inflation) − 1
   //
-  // Mathematical identity note:
-  //   Real_FCF_t / (1+r_real)^t
-  //   = [FCF_t/(1+π)^t] / [(1+r_nom)^t/(1+π)^t]
-  //   = FCF_t / (1+r_nom)^t   ← identical to nominal discounting
+  // Real NPV = nominal FCFs discounted at the real WACC.
   //
-  // Therefore deflating FCFs AND using real WACC always equals Nominal NPV.
-  // The two NPVs will ONLY differ if the initial investment is treated differently.
+  // This answers: "Does the project create value above the real (inflation-
+  // adjusted) cost of capital?" Because r_real < r_nom when inflation > 0,
+  // Real NPV > Nominal NPV for positive FCF streams — the gap widens with
+  // higher inflation. When inflation = 0, r_real = r_nom and the two are equal.
   //
-  // Correct differential interpretation (used in this implementation):
-  //   Nominal NPV: −C0 + Σ FCF_t/(1+r_nom)^t          [t=0 money, nom rate]
-  //   Real NPV:    −C0 + Σ [FCF_t/(1+π)^t]/(1+r_real)^t [real FCFs, real rate]
-  //              = −C0 + Σ FCF_t/(1+r_nom)^t            [always equal, proven]
-  //
-  // The financially meaningful "Real NPV" that differs from Nominal NPV is:
-  //   NPV measured against the REAL hurdle rate = nominal FCFs at real WACC
-  //   This answers: "Does the project create value above the inflation-adjusted
-  //   cost of capital?" If inf>0 and FCFs>0: Real NPV > Nominal NPV because
-  //   the real discount rate is lower than the nominal rate.
-  //
-  // Boundary condition: when inf=0 → r_real=r_nom → Real NPV = Nominal NPV ✓
+  // Note: deflating FCFs first then discounting at real WACC produces the
+  // same result as nominal NPV (algebraic identity), so we do NOT deflate.
   //
   const realW = (1 + disc) / (1 + inf) - 1;  // Fisher real WACC
 
-  // Deflate terminal value to real terms
-  const tvRealDeflated = tv > 0 ? tv / Math.pow(1 + inf, yrs) : 0;
-  const tvPVReal       = tvRealDeflated > 0 ? tvRealDeflated / Math.pow(1 + realW, yrs) : 0;
+  // TV in real terms: discount TV at real WACC (TV is a nominal future value)
+  const tvPVReal = tv > 0 ? tv / Math.pow(1 + realW, yrs) : 0;
 
-  // Real NPV: deflate each FCF then discount at real WACC
-  // (Equivalent to: nominal FCFs discounted at real WACC, per algebraic identity above)
+  // Real NPV: nominal FCFs at real WACC
   let npvReal = -totCapex + tvPVReal;
   for (let i = 0; i < fcf.length; i++) {
-    const realFCF = fcf[i] / Math.pow(1 + inf, i + 1);      // Step 1: deflate
-    npvReal      += realFCF / Math.pow(1 + realW, i + 1);   // Step 2: discount at r_real
-    // Note: above = fcf[i]/(1+disc)^(i+1) algebraically = same as nominal discounting
-    // Real NPV will equal Nominal NPV numerically — this IS correct per Fisher identity
+    npvReal += fcf[i] / Math.pow(1 + realW, i + 1);
   }
-  // When inf > 0, the two will differ ONLY due to floating-point precision
-  // (they are mathematically identical). The display labels clarify the distinction.
   const npvR = Math.round(npvReal);
 
   // ── 11. IRR & MIRR ────────────────────────────────────────────────────
@@ -1711,7 +1691,7 @@ function OverviewTab({inputs,setI,results,totalYears}){
         {[
           {l:"NPV (Nominal)",  v:fmt(results.npv),  c:good?"green":"red", b:good?"badge-green":"badge-red", bt:good?"✓ Creates Value":"✗ Destroys Value"},
           {l:"NPV (Real)",     v:fmt(results.npvR),  c:(results.npvR||0)>0?"green":"red",
-            note:"Real and Nominal NPV are mathematically equal when inflation is applied consistently via the Fisher equation. This is expected and confirms model correctness."},
+            note:"Real NPV discounts nominal cash flows at the real WACC (Fisher equation: real WACC = nominal WACC / (1 + inflation) − 1). When inflation > 0, real WACC < nominal WACC, so Real NPV > Nominal NPV. When inflation = 0, they are equal."},
           {l:"Real IRR",       v:pct(results.realIRR!=null?results.realIRR*100:null), c:results.realIRR!=null&&results.realIRR>0?"green":"red"},
           {l:"IRR (Nominal)",  v:pct(results.irr!=null?results.irr*100:null),          c:results.irr!=null&&results.irr>inputs.discountRate/100?"green":"red"},
           {l:"MIRR",           v:pct(results.mirr!=null?results.mirr*100:null),         c:""},
@@ -1748,8 +1728,8 @@ function OverviewTab({inputs,setI,results,totalYears}){
           <span>ℹ️</span>
           <span>
             Inflation {inputs.inflationRate}% · Real WACC = <strong>{((results.realW||0)*100).toFixed(2)}%</strong> (Fisher).{" "}
-            NPV (Real) = <strong>{fmt(results.npvR)}</strong> · NPV (Nominal) = <strong>{fmt(results.npv)}</strong> — equal by Fisher identity (see <strong>?</strong> on NPV Real card).{" "}
-            Real IRR = <strong>{pct(results.realIRR!=null?results.realIRR*100:null)}</strong> vs Nominal IRR = <strong>{pct(results.irr!=null?results.irr*100:null)}</strong> — Real IRR is your return above inflation.
+            Real NPV <strong>{fmt(results.npvR)}</strong> vs Nominal NPV <strong>{fmt(results.npv)}</strong> — Real NPV is higher because the lower real discount rate reduces the penalty on future cash flows.{" "}
+            Real IRR <strong>{pct(results.realIRR!=null?results.realIRR*100:null)}</strong> is your return above inflation.
           </span>
         </div>
       )}
@@ -2146,7 +2126,7 @@ function ResultsTab({inputs,results}){
         {[
           {l:"NPV (Nominal)",  v:fmt(results.npv),   c:good?"green":"red", b:good?"badge-green":"badge-red", bt:good?"✓ Creates Value":"✗ Destroys Value"},
           {l:"NPV (Real)",     v:fmt(results.npvR),   c:(results.npvR||0)>0?"green":"red",
-            note:"Real and Nominal NPV are mathematically equal when inflation is applied consistently via the Fisher equation. This is expected and confirms model correctness."},
+            note:"Real NPV discounts nominal cash flows at the real WACC (Fisher equation: real WACC = nominal WACC / (1 + inflation) − 1). When inflation > 0, real WACC < nominal WACC, so Real NPV > Nominal NPV. When inflation = 0, they are equal."},
           {l:"Real IRR",       v:pct(results.realIRR!=null?results.realIRR*100:null), c:results.realIRR!=null&&results.realIRR>0?"green":"red"},
           {l:"IRR (Nominal)",  v:pct(results.irr!=null?results.irr*100:null),          c:results.irr!=null&&results.irr>inputs.discountRate/100?"green":"red"},
           {l:"MIRR",           v:pct(results.mirr!=null?results.mirr*100:null),         c:""},
@@ -2607,7 +2587,7 @@ function ScenariosTab({inputs,scenario,applyScenario}){
                     <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
                       {m.l}
                       {m.note&&(
-                        <span title="Real and Nominal NPV are mathematically equal when inflation is applied consistently via the Fisher equation. This is expected and confirms model correctness."
+                        <span title="Real NPV discounts nominal cash flows at the real WACC (Fisher equation: real WACC = nominal WACC / (1 + inflation) − 1). When inflation > 0, real WACC < nominal WACC, so Real NPV > Nominal NPV. When inflation = 0, they are equal."
                           style={{cursor:"help",fontSize:10,color:"var(--text-quaternary)",fontWeight:700,lineHeight:1,background:"var(--fill2)",borderRadius:"50%",width:14,height:14,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</span>
                       )}
                     </span>
