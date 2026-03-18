@@ -254,15 +254,17 @@ function calcFinancials(raw){
 
   // ── 9. NOMINAL NPV ────────────────────────────────────────────────────
   // NPV = -InitialCapex + Σ FCF_t/(1+WACC)^t + TV/(1+WACC)^n
-  // Note: CAPEX is distributed across years; t=0 capex is already in FCF
-  // We use the standard approach: all CAPEX at t=0 as outflow, FCFs from t=1
-  let npvNom=-totCapex+tvPV;
-  const cumNpv=[];
-  for(let i=0;i<fcf.length;i++){
-    npvNom+=fcf[i]/Math.pow(1+disc,i+1);
-    cumNpv.push(npvNom); // keep full precision for internal checks
+  let npvNom = -totCapex;
+  const cumNpv = [];
+  for (let i = 0; i < fcf.length; i++) {
+    npvNom += fcf[i] / Math.pow(1 + disc, i + 1);
+    // Add PV of terminal value only in the final year — it is a Year-N receipt,
+    // not a Year-0 item. This keeps the cumulative chart correctly in negative
+    // territory early on and only inflects upward as cash flows accumulate.
+    const cumWithTv = i === fcf.length - 1 ? npvNom + tvPV : npvNom;
+    cumNpv.push(cumWithTv);
   }
-  const npv=Math.round(npvNom);
+  const npv = Math.round(npvNom + tvPV);
 
   // ── 10. REAL NPV ──────────────────────────────────────────────────────
   //
