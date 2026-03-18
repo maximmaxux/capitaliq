@@ -625,13 +625,10 @@ const Styles=()=>(
     cursor:pointer;flex-shrink:0;
   }
   .logo-mark{
-    width:26px;height:26px;border-radius:8px;flex-shrink:0;
-    background:linear-gradient(145deg,#0071e3 0%,#2563eb 50%,#4f46e5 100%);
+    width:26px;height:26px;flex-shrink:0;
     display:flex;align-items:center;justify-content:center;
-    font-size:13px;font-weight:800;color:#fff;
-    box-shadow:0 2px 8px rgba(0,113,227,0.4),inset 0 1px 0 rgba(255,255,255,0.25);
-    letter-spacing:-0.5px;
   }
+  .logo-mark svg{display:block;}
   .logo-text{font-size:16px;font-weight:700;letter-spacing:-0.4px;color:var(--text-primary);}
   .logo-text span{color:var(--blue);}
 
@@ -1081,6 +1078,32 @@ function ChartTip({active,payload,label}){
     </div>
   );
 }
+/* ══ FOX LOGO SVG ══════════════════════════════════════════════════════ */
+// Minimal sitting fox silhouette — navy blue, matches uploaded brand mark
+function FoxLogo({size=26,color="currentColor"}){
+  const bg=color==="#fff"?"#ffffff":"var(--surface-solid,#ffffff)";
+  return(
+    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+      {/* Left ear */}
+      <path d="M36 42 L22 10 L50 34 Z" fill={color}/>
+      {/* Right ear */}
+      <path d="M64 42 L78 10 L50 34 Z" fill={color}/>
+      {/* Head + snout */}
+      <path d="M50 30 C34 30 22 40 22 52 C22 60 27 67 36 70 C38 72 40 75 40 78 L60 78 C60 75 62 72 64 70 C73 67 78 60 78 52 C78 40 66 30 50 30 Z" fill={color}/>
+      {/* White muzzle highlight */}
+      <ellipse cx="50" cy="56" rx="8" ry="6" fill={bg} opacity="0.28"/>
+      {/* Nose */}
+      <ellipse cx="50" cy="53" rx="3" ry="2" fill={bg}/>
+      {/* Body */}
+      <path d="M30 76 L29 94 C27 97 24 100 22 100 L78 100 C76 100 73 97 71 94 L70 76 Z" fill={color}/>
+      {/* Chest white stripe */}
+      <path d="M45 78 C43 84 43 90 44 96 C46 99 48 100 50 100 C52 100 54 99 56 96 C57 90 57 84 55 78 Z" fill={bg}/>
+      {/* Tail — sweeps left under body */}
+      <path d="M29 92 C18 96 10 106 15 116 C19 124 32 124 40 116 C46 110 44 100 36 97" stroke={color} strokeWidth="7" strokeLinecap="round" fill="none"/>
+    </svg>
+  );
+}
+
 /* ══ MAIN APP ══════════════════════════════════════════════════════════ */
 export default function App(){
   const[screen,setScreen]=useState("landing");
@@ -1208,8 +1231,8 @@ function LoginPage({onLogin,onSignup,onForgot,onBack}){
         <div style={{position:"relative",zIndex:1,maxWidth:380}}>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:40}}>
             <div className="sidebar-logo" style={{background:"none",padding:0,border:"none",height:"auto"}}>
-              <div className="logo-mark">C</div>
-              <span style={{color:"#fff",fontSize:19}}>CapitalIQ</span>
+              <FoxLogo color="#fff"/>
+              <span style={{color:"#fff",fontSize:19}}>Foxinvest</span>
             </div>
           </div>
           <div style={{fontFamily:"Inter",fontSize:34,fontWeight:800,color:"#fff",lineHeight:1.15,marginBottom:14,letterSpacing:"-0.8px"}}>Professional investment analysis.</div>
@@ -1225,7 +1248,7 @@ function LoginPage({onLogin,onSignup,onForgot,onBack}){
       <div className="auth-right">
         <div style={{marginBottom:32}}>
           <div style={{fontSize:13,color:"var(--text-tertiary)",marginBottom:8}}>Welcome back</div>
-          <div className="t-title2">Sign in to CapitalIQ</div>
+          <div className="t-title2">Sign in to Foxinvest</div>
         </div>
         {err&&<div className="auth-err">{err}</div>}
         <div style={{marginBottom:14}}>
@@ -1292,9 +1315,9 @@ function SignupPage({onLogin,onSignin,onBack}){
     <div className="auth-page">
       <div className="auth-left">
         <div style={{position:"relative",zIndex:1,maxWidth:380}}>
-          <div className="sidebar-logo" style={{background:"none",padding:0,border:"none",height:"auto",marginBottom:36}}><div className="logo-mark">C</div><span style={{color:"#fff",fontSize:19}}>CapitalIQ</span></div>
+          <div className="sidebar-logo" style={{background:"none",padding:0,border:"none",height:"auto",marginBottom:36}}><FoxLogo color="#fff"/><span style={{color:"#fff",fontSize:19}}>Foxinvest</span></div>
           <div style={{fontFamily:"Inter",fontSize:32,fontWeight:800,color:"#fff",lineHeight:1.15,marginBottom:14,letterSpacing:"-0.6px"}}>Start making smarter decisions.</div>
-          <div style={{fontSize:15,color:"rgba(255,255,255,0.5)",lineHeight:1.65}}>Join businesses using CapitalIQ for professional investment appraisal with real DCF models and proper financial analysis.</div>
+          <div style={{fontSize:15,color:"rgba(255,255,255,0.5)",lineHeight:1.65}}>Join businesses using Foxinvest for professional investment appraisal with real DCF models and proper financial analysis.</div>
         </div>
       </div>
       <div className="auth-right">
@@ -1332,7 +1355,7 @@ function ForgotPage({onBack}){
   return(
     <div className="auth-page">
       <div className="auth-left"><div style={{position:"relative",zIndex:1,maxWidth:380}}>
-        <div className="sidebar-logo" style={{background:"none",padding:0,border:"none",height:"auto",marginBottom:36}}><div className="logo-mark">C</div><span style={{color:"#fff",fontSize:19}}>CapitalIQ</span></div>
+        <div className="sidebar-logo" style={{background:"none",padding:0,border:"none",height:"auto",marginBottom:36}}><FoxLogo color="#fff"/><span style={{color:"#fff",fontSize:19}}>Foxinvest</span></div>
         <div style={{fontFamily:"Inter",fontSize:32,fontWeight:800,color:"#fff",lineHeight:1.15,marginBottom:14,letterSpacing:"-0.6px"}}>Reset your password.</div>
         <div style={{fontSize:15,color:"rgba(255,255,255,0.5)",lineHeight:1.65}}>Enter your email and we'll send a secure reset link in seconds.</div>
       </div></div>
@@ -1366,8 +1389,8 @@ function Dashboard({session,projects,loading,onOpen,onDelete,onLogout,onNew,curr
       {/* Topbar */}
       <div style={{background:"var(--surface)",backdropFilter:"saturate(180%) blur(24px)",WebkitBackdropFilter:"saturate(180%) blur(24px)",borderBottom:"1px solid var(--sep)",height:52,display:"flex",alignItems:"center",padding:"0 24px",gap:12,position:"sticky",top:0,zIndex:50}}>
         <div style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}} onClick={onHome}>
-          <div className="logo-mark">C</div>
-          <span style={{fontWeight:700,fontSize:16,color:"var(--text-primary)",letterSpacing:"-0.2px"}}>CapitalIQ</span>
+          <FoxLogo/>
+          <span style={{fontWeight:700,fontSize:16,color:"var(--text-primary)",letterSpacing:"-0.2px"}}>Foxinvest</span>
         </div>
         <button onClick={onHome} style={{fontSize:12,color:"var(--text-tertiary)",background:"none",border:"1px solid var(--sep)",borderRadius:6,padding:"3px 9px",cursor:"pointer",fontFamily:"inherit"}}>Home</button>
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}>
@@ -1411,7 +1434,7 @@ function Dashboard({session,projects,loading,onOpen,onDelete,onLogout,onNew,curr
         {!loading&&projects.length===0&&(
           <div style={{textAlign:"center",padding:"72px 24px",background:"var(--surface-solid)",borderRadius:"var(--r-xl)",border:"1.5px dashed var(--sep)",marginBottom:20}}>
             <div style={{width:64,height:64,borderRadius:18,background:"var(--blue-bg)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 18px"}}>📊</div>
-            <div className="t-title3" style={{marginBottom:8}}>Welcome to CapitalIQ</div>
+            <div className="t-title3" style={{marginBottom:8}}>Welcome to Foxinvest</div>
             <div style={{fontSize:14,color:"var(--text-secondary)",maxWidth:440,margin:"0 auto 24px",lineHeight:1.6}}>Create your first investment project to get professional DCF analysis, scenario planning, sensitivity analysis and a board-ready proposal.</div>
             <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginBottom:24}}>
               {[["🏗","Construction phases"],["📈","Revenue drivers"],["🎯","Break-even finder"],["📄","Auto proposals"]].map(([i,t])=>(
@@ -1486,7 +1509,7 @@ function ProfilePage({session,onBack,onLogout}){
     <div style={{minHeight:"100dvh",background:"var(--bg)"}}>
       <div style={{background:"var(--surface)",backdropFilter:"saturate(180%) blur(24px)",WebkitBackdropFilter:"saturate(180%) blur(24px)",borderBottom:"1px solid var(--sep)",height:52,display:"flex",alignItems:"center",padding:"0 20px",gap:12,position:"sticky",top:0,zIndex:50}}>
         <button className="btn btn-ghost" onClick={onBack}>← Back</button>
-        <div style={{fontWeight:700,fontSize:16,letterSpacing:"-0.2px"}}>CapitalIQ</div>
+        <div style={{fontWeight:700,fontSize:16,letterSpacing:"-0.2px"}}>Foxinvest</div>
         <div style={{fontSize:13,color:"var(--text-tertiary)"}}>/</div>
         <div style={{fontSize:14,color:"var(--text-secondary)"}}>My Profile</div>
       </div>
@@ -1583,8 +1606,8 @@ function AppShell({project,onBack,onSave,session,onProfile,currency,setCurrency}
       {/* SIDEBAR */}
       <aside className="sidebar">
         <div className="sidebar-logo" onClick={onBack}>
-          <div className="logo-mark">C</div>
-          <span className="logo-text">Capital<span>IQ</span></span>
+          <FoxLogo/>
+          <span className="logo-text">Foxinvest</span>
         </div>
         <div className="sidebar-nav">
           <div className="sidebar-section-label">Analysis</div>
@@ -1637,7 +1660,7 @@ function AppShell({project,onBack,onSave,session,onProfile,currency,setCurrency}
         {/* CONTENT */}
         <div className="content">
           <div className="print-header" style={{marginBottom:14,paddingBottom:10,borderBottom:"2px solid var(--blue)"}}>
-            <div style={{fontSize:20,fontWeight:700}}>CapitalIQ — {projName}</div>
+            <div style={{fontSize:20,fontWeight:700}}>Foxinvest — {projName}</div>
             <div style={{fontSize:12,color:"var(--text-tertiary)",marginTop:3}}>{new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})}</div>
           </div>
           {tab==="overview"    && <OverviewTab    inputs={inputs} setI={setI} results={results} totalYears={totalYears}/>}
@@ -1661,19 +1684,48 @@ function var_(k,fallback){return`var(--${k},${fallback})`;}
 function var__(k){return`var(--${k})`;}
 
 /* ── Shared input helper ── */
-// max=Infinity for monetary/unit fields, max=100 for percentages
+// Uses local string state so the user can clear and retype freely.
+// Only converts to number on blur.
 function Inp({label,value,onChange,pre,suf,min=0,max=Infinity,step=1,type="number",note,disabled}){
+  const[raw,setRaw]=useState(String(value??''));
+  // Sync when value changes from outside (e.g. scenario switch)
+  const prev=useState(value)[0];
+  useEffect(()=>{
+    setRaw(String(value??''));
+  },[value]);
+
+  const commit=rawVal=>{
+    if(type!=="number"){onChange(rawVal);return;}
+    const n=rawVal===''||rawVal==='-'?0:Number(rawVal);
+    const safe=isFinite(n)?Math.max(min,max===Infinity?n:Math.min(max,n)):min;
+    onChange(safe);
+    setRaw(String(safe));
+  };
+
   return(
     <div className="input-group">
       {label&&<label className="input-label">{label}{note&&<span style={{color:"var(--text-quaternary)",fontWeight:400,marginLeft:4}}>({note})</span>}</label>}
       <div className="input-wrap">
         {pre&&<span className="input-prefix">{pre}</span>}
-        <input className={`input-field${pre?" has-prefix":""}${suf?" has-suffix":""}`}
-          type={type} value={value??""} min={min}
-          max={max===Infinity?undefined:max}
-          step={step} disabled={disabled}
-          onChange={e=>onChange(e.target.value)}
-          onBlur={e=>{if(type==="number"){const n=Number(e.target.value);if(isFinite(n)) onChange(Math.max(min,max===Infinity?n:Math.min(max,n)));}}}/>
+        <input
+          className={`input-field${pre?" has-prefix":""}${suf?" has-suffix":""}`}
+          type="text"
+          inputMode={type==="number"?"decimal":"text"}
+          value={raw}
+          disabled={disabled}
+          onChange={e=>{
+            const v=e.target.value;
+            // Allow empty, minus sign, digits, one decimal point — anything the user needs to type
+            setRaw(v);
+            // Live-update only if it's a valid complete number (not mid-typing)
+            if(v!==''&&v!=='-'&&v!=='.'){
+              const n=Number(v);
+              if(isFinite(n)) onChange(n);
+            }
+          }}
+          onBlur={e=>commit(e.target.value)}
+          onKeyDown={e=>{if(e.key==='Enter') commit(e.target.value);}}
+        />
         {suf&&<span className="input-suffix">{suf}</span>}
       </div>
     </div>
@@ -1953,14 +2005,14 @@ function RevenueTab({inputs,setI,results}){
                 <div className="input-group">
                   <input value={line.d1l||"Units"} onChange={e=>upd(idx,"d1l",e.target.value)}
                     style={{border:"none",background:"none",fontWeight:600,fontSize:11,color:"var(--text-secondary)",outline:"none",fontFamily:"inherit",marginBottom:5,display:"block"}}/>
-                  <div className="input-wrap"><input className="input-field" type="number" value={line.d1||""} onChange={e=>upd(idx,"d1",Number(e.target.value)||0)} disabled={!line.on}/></div>
+                  <Inp value={line.d1??0} onChange={v=>upd(idx,"d1",v)} disabled={!line.on}/>
                 </div>
                 <div className="input-group">
                   <input value={line.d2l||"Price/unit"} onChange={e=>upd(idx,"d2l",e.target.value)}
                     style={{border:"none",background:"none",fontWeight:600,fontSize:11,color:"var(--text-secondary)",outline:"none",fontFamily:"inherit",marginBottom:5,display:"block"}}/>
-                  <div className="input-wrap"><span className="input-prefix">{sym}</span><input className="input-field has-prefix" type="number" value={line.d2||""} onChange={e=>upd(idx,"d2",Number(e.target.value)||0)} disabled={!line.on}/></div>
+                  <Inp value={line.d2??0} onChange={v=>upd(idx,"d2",v)} pre={sym} disabled={!line.on}/>
                 </div>
-                <Inp label="Annual Growth" value={line.growth??0} onChange={v=>upd(idx,"growth",Number(v)||0)} suf="%" min={-50} max={200} disabled={!line.on}/>
+                <Inp label="Annual Growth" value={line.growth??0} onChange={v=>upd(idx,"growth",v)} suf="%" min={-50} max={200} disabled={!line.on}/>
               </div>
             </div>
           ))}
@@ -2027,10 +2079,10 @@ function CostsTab({inputs,setI,results}){
               </div>
               <div className="grid-3">
                 {line.pctRev
-                  ? <Inp label="% of Revenue" value={line.pct??""} onChange={v=>upd(idx,"pct",Number(v)||0)} suf="%" min={0} max={100} disabled={!line.on}/>
-                  : <Inp label="Annual Amount (Year 1)" value={line.val??""} onChange={v=>upd(idx,"val",Number(v)||0)} pre={sym} min={0} disabled={!line.on}/>
+                  ? <Inp label="% of Revenue" value={line.pct??0} onChange={v=>upd(idx,"pct",v)} suf="%" min={0} max={100} disabled={!line.on}/>
+                  : <Inp label="Annual Amount (Year 1)" value={line.val??0} onChange={v=>upd(idx,"val",v)} pre={sym} min={0} disabled={!line.on}/>
                 }
-                <Inp label="Annual Growth" value={line.growth??0} onChange={v=>upd(idx,"growth",Number(v)||0)} suf="%" min={-50} max={100} disabled={!line.on||line.pctRev}/>
+                <Inp label="Annual Growth" value={line.growth??0} onChange={v=>upd(idx,"growth",v)} suf="%" min={-50} max={100} disabled={!line.on||line.pctRev}/>
               </div>
             </div>
           ))}
@@ -2669,7 +2721,7 @@ function ProposalTab({inputs,results,projName}){
           <div>
             <div style={{fontSize:10,color:"rgba(255,255,255,0.4)",fontWeight:700,letterSpacing:"1.5px",textTransform:"uppercase",marginBottom:6}}>Investment Proposal</div>
             <div style={{fontSize:24,fontWeight:800,color:"#fff",letterSpacing:"-0.5px",marginBottom:4}}>{projName}</div>
-            <div style={{fontSize:12,color:"rgba(255,255,255,0.4)"}}>Prepared by CapitalIQ · {today}</div>
+            <div style={{fontSize:12,color:"rgba(255,255,255,0.4)"}}>Prepared by Foxinvest · {today}</div>
           </div>
           <div style={{display:"inline-flex",alignItems:"center",gap:8,background:good?"rgba(52,199,89,0.15)":"rgba(255,59,48,0.15)",padding:"10px 16px",borderRadius:12,border:`1px solid ${good?"var(--green)":"var(--red)"}`}}>
             <span style={{fontSize:16}}>{good?"✅":"⚠️"}</span>
@@ -2757,8 +2809,8 @@ function LandingPage({onLaunch,onDash}){
       {/* Nav */}
       <nav style={{position:"fixed",top:0,left:0,right:0,zIndex:100,background:"var(--surface)",backdropFilter:"saturate(180%) blur(24px)",WebkitBackdropFilter:"saturate(180%) blur(24px)",borderBottom:"1px solid var(--sep)",height:52,display:"flex",alignItems:"center",padding:"0 32px",justifyContent:"space-between"}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <div className="logo-mark">C</div>
-          <span style={{fontWeight:700,fontSize:17,letterSpacing:"-0.3px"}}>CapitalIQ</span>
+          <FoxLogo/>
+          <span style={{fontWeight:700,fontSize:17,letterSpacing:"-0.3px"}}>Foxinvest</span>
         </div>
         <div style={{display:"flex",gap:8}}>
           {onDash
@@ -2845,8 +2897,8 @@ function LandingPage({onLaunch,onDash}){
       {/* Footer */}
       <div style={{background:"var(--bg2)",borderTop:"1px solid var(--sep)",padding:"32px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <div className="logo-mark">C</div>
-          <span style={{fontWeight:700,fontSize:15}}>CapitalIQ</span>
+          <FoxLogo/>
+          <span style={{fontWeight:700,fontSize:15}}>Foxinvest</span>
           <span style={{color:"var(--text-tertiary)",fontSize:13}}>© {new Date().getFullYear()}</span>
         </div>
         <div style={{fontSize:13,color:"var(--text-tertiary)"}}>Professional investment analysis for businesses that mean business.</div>
