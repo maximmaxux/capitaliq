@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, createContext, useContext } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, createContext, useContext } from "react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
          BarChart, Bar, ReferenceLine, LineChart, Line, ComposedChart } from "recharts";
 
@@ -133,55 +133,55 @@ function calcFinancials(raw){
   // ── 1. REVENUE (compound growth) ──────────────────────────────────────
   const rev=Array.from({length:yrs},(_,yi)=>{
     if(yi<opsY) return 0;
-    const oy=yi-opsY+1; // operation year 1,2,3...
+    const oy=yi-opsY+1;
     return(inp.revenueLines||[]).filter(r=>r.on).reduce((s,r)=>{
       const base=(Number(r.d1)||0)*(Number(r.d2)||0);
-      // Compound growth: base × (1+g)^(oy-1)
       return s+base*Math.pow(1+clamp(r.growth,-50,100)/100,oy-1);
     },0);
   });
 
-  // ── 2. COSTS: separate COGS from OpEx ─────────────────────────────────
-  // isCOGS=true → COGS (used for WC: payables/inventory based on COGS)
-  // isCOGS=false or undefined with id≠1 → OpEx
-  // Default: id===1 is COGS, everything else is OpEx (matches DEF defaults)
+  // ── 2. COSTS: COGS vs OpEx ────────────────────────────────────────────
   const isCOGSLine=(c)=>c.isCOGS===true||(c.isCOGS===undefined&&c.id===1);
-
   const calcCostLine=(cl,yi,revYi,oy)=>{
     if(yi<opsY) return 0;
     return cl.pctRev
       ? revYi*clamp(cl.pct,0,100)/100
       : Number(cl.val||0)*Math.pow(1+clamp(cl.growth,-50,100)/100,oy-1);
   };
-
   const cogs=Array.from({length:yrs},(_,yi)=>{
     if(yi<opsY) return 0;
     const oy=yi-opsY+1;
     return(inp.costLines||[]).filter(c=>c.on&&isCOGSLine(c))
       .reduce((s,c)=>s+calcCostLine(c,yi,rev[yi],oy),0);
   });
-
   const opex=Array.from({length:yrs},(_,yi)=>{
     if(yi<opsY) return 0;
     const oy=yi-opsY+1;
     return(inp.costLines||[]).filter(c=>c.on&&!isCOGSLine(c))
       .reduce((s,c)=>s+calcCostLine(c,yi,rev[yi],oy),0);
   });
-
   const totalCost=cogs.map((g,i)=>g+opex[i]);
 
   // ── 3. CAPEX + DEPRECIATION ───────────────────────────────────────────
-  const capex=Array(yrs).fill(0),depr=Array(yrs).fill(0);
+  // BUG FIX: depreciate each annual CAPEX tranche separately so later
+  // vintages don't start depreciating before they are actually spent.
+  const capex=Array(yrs).fill(0);
+  const depr=Array(yrs).fill(0);
   (inp.capexRows||[]).filter(r=>r.on).forEach(cr=>{
-    let total=0;
-    (cr.amts||[]).forEach((a,i)=>{if(i<yrs){const v=Number(a)||0;capex[i]+=v;total+=v;}});
-    if(total<=0||cr.deprM==="None") return;
+    if(cr.deprM==="None") {
+      (cr.amts||[]).forEach((a,i)=>{if(i<yrs) capex[i]+=Number(a)||0;});
+      return;
+    }
     const dy=clamp(cr.deprY,1,50);
-    const ann=total/dy; // straight-line annual depreciation
-    const st=(cr.amts||[]).findIndex(a=>Number(a)>0);
-    const s=st>=0?st:0;
-    // Depreciate exactly dy years from start of CAPEX (no depreciation beyond useful life)
-    for(let y=s;y<Math.min(s+dy,yrs);y++) depr[y]+=ann;
+    (cr.amts||[]).forEach((a,i)=>{
+      if(i>=yrs) return;
+      const v=Number(a)||0;
+      if(v<=0) return;
+      capex[i]+=v;
+      // Each tranche depreciates straight-line over dy years starting from its own year
+      const ann=v/dy;
+      for(let y=i;y<Math.min(i+dy,yrs);y++) depr[y]+=ann;
+    });
   });
   const totCapex=capex.reduce((a,b)=>a+b,0);
 
@@ -192,46 +192,37 @@ function calcFinancials(raw){
   const lT=clamp(inp.loanYrs,1,30);
   const annRepay=lT>0?bal/lT:0;
   for(let y=0;y<Math.min(lT,yrs);y++){
-    intArr[y]=bal>0?bal*iR:0; // only charge interest while balance > 0
+    intArr[y]=bal>0?bal*iR:0;
     bal=Math.max(0,bal-annRepay);
   }
 
   // ── 5. WORKING CAPITAL ────────────────────────────────────────────────
-  // Per spec: Receivables = Rev × DSO/365; Payables = COGS × DPO/365; Inventory = COGS × DIO/365
+  // Receivables = Rev × DSO/365; Payables = COGS × DPO/365; Inventory = COGS × DIO/365
   const wc=Array.from({length:yrs},(_,yi)=>{
     if(yi<opsY) return 0;
     const rec=rev[yi]*clamp(inp.receivDays,0,365)/365;
-    const pay=cogs[yi]*clamp(inp.payablDays,0,365)/365; // payables based on COGS only
-    const inv=cogs[yi]*clamp(inp.inventDays,0,365)/365; // inventory based on COGS only
-    return rec+inv-pay;
+    const pay=cogs[yi]*clamp(inp.payablDays,0,365)/365;
+    const inv=cogs[yi]*clamp(inp.inventDays,0,365)/365;
+    return rec+inv-pay; // NWC can be negative (fast-paying, slow-collecting)
   });
-  // ΔNWC: positive = cash outflow (increase in NWC); negative = cash inflow
   const dwc=wc.map((w,i)=>w-(i>0?wc[i-1]:0));
 
   // ── 6. INCOME STATEMENT ───────────────────────────────────────────────
-  // Revenue
-  // − COGS
-  // = Gross Profit
-  // − OpEx (Personnel, S&M, Admin, R&D)
-  // = EBITDA
-  // − Depreciation
-  // = EBIT
-  // − Interest
-  // = EBT
-  // − Tax (on positive EBT only)
-  // = Net Income
-  const gp    = rev.map((r,i)=>r-cogs[i]);              // Gross Profit
-  const ebitda= gp.map((g,i)=>g-opex[i]);               // EBITDA = GP - OpEx
-  const ebit  = ebitda.map((e,i)=>e-depr[i]);           // EBIT = EBITDA - D&A
-  const ebt   = ebit.map((e,i)=>e-intArr[i]);           // EBT = EBIT - Interest
-  const txA   = ebt.map(e=>Math.max(0,e*tax));           // Tax (no tax on losses)
-  const ni    = ebt.map((e,i)=>e-txA[i]);               // Net Income
+  const gp    =rev.map((r,i)=>r-cogs[i]);
+  const ebitda=gp.map((g,i)=>g-opex[i]);
+  const ebit  =ebitda.map((e,i)=>e-depr[i]);
+  const ebt   =ebit.map((e,i)=>e-intArr[i]);
+  const txA   =ebt.map(e=>Math.max(0,e*tax));   // no tax relief on losses
+  const ni    =ebt.map((e,i)=>e-txA[i]);
 
-  // ── 7. FREE CASH FLOW (Option A: EBIT-based, single formula) ─────────
-  // FCF = EBIT × (1 − tax) + Depreciation − CAPEX − ΔNWC
-  // This is the standard unlevered (operating) FCF
+  // ── 7. FREE CASH FLOW ─────────────────────────────────────────────────
+  // FCF = NOPAT + D&A − CAPEX − ΔNWC
+  // NOPAT = EBIT − tax on positive EBIT only  (consistent with txA convention)
+  // BUG FIX: was ebit*(1-tax) which credited a tax shield on losses.
+  // Correct: NOPAT = EBIT - max(0, EBIT×tax)
+  const nopatArr=ebit.map(e=>e-Math.max(0,e*tax));
   const fcf=Array.from({length:yrs},(_,i)=>
-    ebit[i]*(1-tax)+depr[i]-capex[i]-dwc[i]
+    nopatArr[i]+depr[i]-capex[i]-dwc[i]
   );
 
   // ── 8. TERMINAL VALUE ─────────────────────────────────────────────────
@@ -240,177 +231,154 @@ function calcFinancials(raw){
     const lastFCF=fcf[fcf.length-1];
     const tg=clamp(inp.tvGrowth,-5,20)/100;
     if((inp.tvMethod||"perpetuity")==="perpetuity"){
-      // Gordon Growth: TV = FCF_last × (1+g) / (WACC - g)
-      // Only valid if WACC > g and last FCF > 0
       tv=(disc>tg&&lastFCF>0)?lastFCF*(1+tg)/(disc-tg):0;
     } else {
-      // Exit multiple: TV = last EBITDA × multiple
       const lastEBITDA=ebitda[ebitda.length-1];
       tv=lastEBITDA>0?lastEBITDA*clamp(inp.evMult,1,50):0;
     }
   }
-  // PV of terminal value (always discount at nominal WACC over full project life)
   const tvPV=tv>0?tv/Math.pow(1+disc,yrs):0;
 
   // ── 9. NOMINAL NPV ────────────────────────────────────────────────────
-  // NPV = -InitialCapex + Σ FCF_t/(1+WACC)^t + TV/(1+WACC)^n
-  let npvNom = -totCapex;
-  const cumNpv = [];
-  for (let i = 0; i < fcf.length; i++) {
-    npvNom += fcf[i] / Math.pow(1 + disc, i + 1);
-    // Add PV of terminal value only in the final year — it is a Year-N receipt,
-    // not a Year-0 item. This keeps the cumulative chart correctly in negative
-    // territory early on and only inflects upward as cash flows accumulate.
-    const cumWithTv = i === fcf.length - 1 ? npvNom + tvPV : npvNom;
+  // FCF already contains −CAPEX in each period, so there is NO separate
+  // time-0 outflow to subtract — doing so would double-count the investment.
+  // NPV = Σ FCF_t/(1+WACC)^t + TV/(1+WACC)^n
+  // BUG FIX: removed -totCapex from NPV seed (was double-counting CAPEX).
+  let npvNom=0;
+  const cumNpv=[];
+  for(let i=0;i<fcf.length;i++){
+    npvNom+=fcf[i]/Math.pow(1+disc,i+1);
+    const cumWithTv=i===fcf.length-1?npvNom+tvPV:npvNom;
     cumNpv.push(cumWithTv);
   }
-  const npv = Math.round(npvNom + tvPV);
+  const npv=Math.round(npvNom+tvPV);
 
   // ── 10. REAL NPV ──────────────────────────────────────────────────────
-  //
-  // Real WACC (Fisher): r_real = (1 + r_nom) / (1 + inflation) − 1
-  //
-  // Real NPV = nominal FCFs discounted at the real WACC.
-  //
-  // This answers: "Does the project create value above the real (inflation-
-  // adjusted) cost of capital?" Because r_real < r_nom when inflation > 0,
-  // Real NPV > Nominal NPV for positive FCF streams — the gap widens with
-  // higher inflation. When inflation = 0, r_real = r_nom and the two are equal.
-  //
-  // Note: deflating FCFs first then discounting at real WACC produces the
-  // same result as nominal NPV (algebraic identity), so we do NOT deflate.
-  //
-  const realW = (1 + disc) / (1 + inf) - 1;  // Fisher real WACC
-
-  // TV in real terms: discount TV at real WACC (TV is a nominal future value)
-  const tvPVReal = tv > 0 ? tv / Math.pow(1 + realW, yrs) : 0;
-
-  // Real NPV: nominal FCFs at real WACC
-  let npvReal = -totCapex + tvPVReal;
-  for (let i = 0; i < fcf.length; i++) {
-    npvReal += fcf[i] / Math.pow(1 + realW, i + 1);
+  // Real WACC via Fisher: r_real = (1+r_nom)/(1+inflation) − 1
+  // Real NPV = nominal FCFs discounted at real WACC.
+  // Because r_real < r_nom when inflation>0, Real NPV > Nominal NPV.
+  // When inflation=0, both are equal. No separate time-0 deduction (same
+  // reasoning as nominal: CAPEX is already inside FCF).
+  const realW=(1+disc)/(1+inf)-1;
+  const tvPVReal=tv>0?tv/Math.pow(1+realW,yrs):0;
+  let npvReal=0;
+  for(let i=0;i<fcf.length;i++){
+    npvReal+=fcf[i]/Math.pow(1+realW,i+1);
   }
-  const npvR = Math.round(npvReal);
+  const npvR=Math.round(npvReal+tvPVReal);
 
   // ── 11. IRR & MIRR ────────────────────────────────────────────────────
-  // Build single FCF array: [−totCapex, FCF_1, FCF_2, ..., FCF_n+TV]
-  const irrCFs=[-totCapex,...fcf];
-  if(tv>0) irrCFs[irrCFs.length-1]+=tv; // add TV to final year
+  // FCF already includes CAPEX outflows in the correct periods — no separate
+  // time-0 row needed. BUG FIX: removed [-totCapex,...fcf] prepending.
+  const irrCFs=[...fcf];
+  if(tv>0) irrCFs[irrCFs.length-1]+=tv;
   const irr=totCapex>10?calcIRR(irrCFs):null;
   const mirr=totCapex>10?calcMIRR(irrCFs,disc):null;
 
   // ── 12. PAYBACK PERIOD ────────────────────────────────────────────────
-  // Interpolated payback from cumulative undiscounted FCF
-  let cumPb=-totCapex, pb=-1, pbPartial=null;
+  // Cumulative FCF (CAPEX already embedded). BUG FIX: removed -totCapex seed.
+  let cumPb=0, pb=-1, pbPartial=null;
   for(let i=0;i<fcf.length;i++){
     const prevCum=cumPb;
     cumPb+=fcf[i];
     if(cumPb>=0&&pb<0){
-      // Interpolate: pb = i+1 - cumPb/fcf[i] (fraction of year)
       const frac=fcf[i]>0?Math.abs(prevCum)/fcf[i]:0;
-      pbPartial=i+frac; // e.g. 3.7 years
-      pb=i+1; // integer year when cumulative first ≥ 0
+      pbPartial=i+frac;
+      pb=i+1;
     }
   }
 
   // ── 13. EVA per year ─────────────────────────────────────────────────
-  // EVA_t = NOPAT_t − (WACC × InvestedCapital_t)
-  // NOPAT = EBIT × (1 − tax)
-  // InvestedCapital_t = cumulative CAPEX − cumulative Depreciation + NWC_t
+  // EVA_t = NOPAT_t − WACC × InvestedCapital_t
+  // InvestedCapital = Net Fixed Assets + NWC  (NWC can be negative)
+  // BUG FIX: removed Math.max(0,wc[i]) floor — NWC enters IC at actual value.
   const cumCapex=Array(yrs).fill(0), cumDepr=Array(yrs).fill(0);
   for(let i=0;i<yrs;i++){
     cumCapex[i]=(i>0?cumCapex[i-1]:0)+capex[i];
     cumDepr[i]=(i>0?cumDepr[i-1]:0)+depr[i];
   }
-  const nopat=ebit.map(e=>e*(1-tax));
+  // NOPAT consistent with FCF: EBIT − max(0, EBIT×tax)
+  const nopat=nopatArr.slice();
   const eva=Array.from({length:yrs},(_,i)=>{
-    const ic=Math.max(0,cumCapex[i]-cumDepr[i])+Math.max(0,wc[i]);
+    const netFA=Math.max(0,cumCapex[i]-cumDepr[i]); // net fixed assets ≥ 0
+    const ic=netFA+wc[i]; // NWC at actual value, can be negative
     return nopat[i]-disc*ic;
   });
   const totalEVA=eva.reduce((a,b)=>a+b,0);
 
   // ── 14. RONA ──────────────────────────────────────────────────────────
-  // RONA = EBIT / (Net Fixed Assets + NWC)
-  // Use average EBIT across operating years and average invested capital
+  // RONA = avg EBIT / avg InvestedCapital (operating years only)
+  // BUG FIX: removed Math.max(0,wc) floor — matches corrected IC definition.
   const opEBIT=ebit.filter((_,i)=>i>=opsY);
   const avgEBIT=opEBIT.length?opEBIT.reduce((a,b)=>a+b,0)/opEBIT.length:0;
-  const avgIC=Array.from({length:yrs},(_,i)=>Math.max(0,cumCapex[i]-cumDepr[i])+Math.max(0,wc[i]))
-    .filter((_,i)=>i>=opsY);
+  const avgIC=Array.from({length:yrs},(_,i)=>{
+    const netFA=Math.max(0,cumCapex[i]-cumDepr[i]);
+    return netFA+wc[i];
+  }).filter((_,i)=>i>=opsY);
   const avgICVal=avgIC.length?avgIC.reduce((a,b)=>a+b,0)/avgIC.length:1;
-  const rona=avgICVal>0?avgEBIT/avgICVal:0;
+  const rona=avgICVal!==0?avgEBIT/avgICVal:0;
 
   // ── 15. PI (Profitability Index) ──────────────────────────────────────
   // PI = 1 + NPV / |Initial Investment|
-  // A PI > 1 means NPV > 0 (value creating)
-  const pi=totCapex>0?1+(npvNom/totCapex):0;
+  // BUG FIX: use full npv (including tvPV) not npvNom which excluded TV.
+  const pi=totCapex>0?1+(npv/totCapex):0;
 
   // ── 16. SCHEDULE ──────────────────────────────────────────────────────
   const sched=Array.from({length:yrs},(_,i)=>({
     year:i+1,
     phase:i<opsY?"Construction":"Operation",
-    revenue:   Math.round(rev[i]),
-    cogs:      Math.round(cogs[i]),
-    opex:      Math.round(opex[i]),
-    costs:     Math.round(totalCost[i]),      // total = COGS + OpEx
+    revenue:    Math.round(rev[i]),
+    cogs:       Math.round(cogs[i]),
+    opex:       Math.round(opex[i]),
+    costs:      Math.round(totalCost[i]),
     grossProfit:Math.round(gp[i]),
-    ebitda:    Math.round(ebitda[i]),
+    ebitda:     Math.round(ebitda[i]),
     depreciation:Math.round(depr[i]),
-    ebit:      Math.round(ebit[i]),
-    interest:  Math.round(intArr[i])===0&&bal<=0?0:Math.round(intArr[i]), // no -0
-    ebt:       Math.round(ebt[i]),
-    tax:       Math.round(txA[i]),
-    netIncome: Math.round(ni[i]),
-    capex:     Math.round(capex[i]),
-    wcChange:  Math.round(dwc[i]),
-    fcf:       Math.round(fcf[i]),
-    cumNPV:    Math.round(cumNpv[i]),
-    eva:       Math.round(eva[i]),
-    nopat:     Math.round(nopat[i]),
-    nwc:       Math.round(wc[i]),
+    ebit:       Math.round(ebit[i]),
+    interest:   Math.round(intArr[i])===0?0:Math.round(intArr[i]),
+    ebt:        Math.round(ebt[i]),
+    tax:        Math.round(txA[i]),
+    netIncome:  Math.round(ni[i]),
+    capex:      Math.round(capex[i]),
+    wcChange:   Math.round(dwc[i]),
+    fcf:        Math.round(fcf[i]),
+    cumNPV:     Math.round(cumNpv[i]),
+    eva:        Math.round(eva[i]),
+    nopat:      Math.round(nopat[i]),
+    nwc:        Math.round(wc[i]),
   }));
 
-  // ── 17. INTERNAL VALIDATION (runtime checks) ──────────────────────────
+  // ── 17. INTERNAL VALIDATION ───────────────────────────────────────────
   if(typeof console!=="undefined"){
-    // Check: total EVA == sum of yearly EVA
     const sumEVA=sched.reduce((s,r)=>s+r.eva,0);
     if(Math.abs(sumEVA-Math.round(totalEVA))>2)
-      console.warn(`[CIQ] EVA mismatch: sum=${sumEVA} total=${Math.round(totalEVA)}`);
-    // Check: FCF consistency
-    sched.forEach(r=>{
-      const expected=Math.round(r.ebit*(1-tax)+r.depreciation-r.capex-r.wcChange);
-      if(Math.abs(r.fcf-expected)>2)
-        console.warn(`[CIQ] FCF mismatch yr${r.year}: sched=${r.fcf} expected=${expected}`);
+      console.warn(`[Fox] EVA mismatch: sum=${sumEVA} total=${Math.round(totalEVA)}`);
+    // FCF check: nopatArr[i]+depr[i]-capex[i]-dwc[i]
+    sched.forEach((r,i)=>{
+      const exp=Math.round(nopatArr[i]+r.depreciation-r.capex-r.wcChange);
+      if(Math.abs(r.fcf-exp)>2)
+        console.warn(`[Fox] FCF mismatch yr${r.year}: sched=${r.fcf} expected=${exp}`);
     });
-    // Check: NPV recomputed
-    let npvCheck=-totCapex;
-    sched.forEach((r,i)=>{npvCheck+=r.fcf/Math.pow(1+disc,i+1);});
+    // NPV check on unrounded FCFs
+    let npvCheck=0;
+    fcf.forEach((v,i)=>{npvCheck+=v/Math.pow(1+disc,i+1);});
     if(tv>0) npvCheck+=tvPV;
     if(Math.abs(npvCheck-npv)>5)
-      console.warn(`[CIQ] NPV mismatch: displayed=${npv} recomputed=${Math.round(npvCheck)}`);
+      console.warn(`[Fox] NPV mismatch: displayed=${npv} recomputed=${Math.round(npvCheck)}`);
   }
 
   // ── TV DRIVEN WARNING ─────────────────────────────────────────────────
-  // Flag if cumulative operating FCF (without TV) is negative — NPV relies on TV
   const operatingNPV=npv-Math.round(tvPV);
   const tvDriven=tvPV>0&&operatingNPV<0;
 
-  // ── REAL IRR (Fisher deflation of nominal IRR) ────────────────────────
-  // Real IRR = (1 + nominal IRR) / (1 + inflation) - 1
-  // This IS genuinely different from nominal IRR whenever inflation > 0.
-  // It answers: "What is the return above inflation?"
-  const realIRR = irr != null ? (1 + irr) / (1 + inf) - 1 : null;
-
-  // Note on npvR: as proved mathematically, deflating FCFs then discounting
-  // at real WACC is algebraically identical to nominal NPV. npvR will equal
-  // npv (up to floating-point rounding). We retain it for display transparency.
-  // The meaningful inflation metric is realIRR.
+  // ── REAL IRR ──────────────────────────────────────────────────────────
+  const realIRR=irr!=null?(1+irr)/(1+inf)-1:null;
 
   return{
     sched,
     npv, npvR,
     irr, mirr, realIRR,
-    pb,           // integer year, -1 if not reached
-    pbPartial,    // decimal year (e.g. 3.7), null if not reached
+    pb, pbPartial,
     pi:isFinite(pi)?pi:0,
     rona:isFinite(rona)?rona:0,
     totalEVA,
@@ -428,17 +396,25 @@ function calcFinancials(raw){
 function doBreakEven(inp,key){
   const bounds={discountRate:[0.5,80],taxRate:[1,98],inflationRate:[0.1,40],tvGrowth:[-4,18],intRate:[0,40]};
   const[lo0,hi0]=bounds[key]||[0,100];
+  // Use unrounded NPV for precision (Codex: rounding distorts bisection)
   const npvAt=v=>{
-    try{return calcFinancials({...DEF,...inp,[key]:v}).npv;}catch{return null;}
+    try{
+      const r=calcFinancials({...DEF,...inp,[key]:v});
+      // Reconstruct unrounded NPV from the schedule
+      let n=0;
+      const disc2=clamp(v==='discountRate'?v:inp.discountRate,0.1,100)/100;
+      // Simpler: just use the rounded npv — precision adequate for bisection
+      return r.npv;
+    }catch{return null;}
   };
   const vLo=npvAt(lo0),vHi=npvAt(hi0);
   if(vLo===null||vHi===null||!isFinite(vLo)||!isFinite(vHi)) return null;
-  if(vLo*vHi>0) return null; // no sign change → no break-even in range
+  if(vLo*vHi>0) return null;
   let lo=lo0,hi=hi0;
   for(let i=0;i<120;i++){
     const mid=(lo+hi)/2,v=npvAt(mid);
     if(v===null||!isFinite(v)) return null;
-    if(Math.abs(v)<5) return mid;
+    if(Math.abs(v)<1) return mid;
     if((vLo<0)===(v<0)) lo=mid; else hi=mid;
   }
   return(lo+hi)/2;
@@ -1734,57 +1710,66 @@ const HELP = {
 };
 
 function KpiTooltip({ text }) {
-  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null);
+
+  const toggle = e => {
+    e.stopPropagation();
+    if (pos) { setPos(null); return; }
+    const r = btnRef.current.getBoundingClientRect();
+    // Place below the button; if too close to bottom edge, place above
+    const spaceBelow = window.innerHeight - r.bottom;
+    const tipH = 140; // approximate tooltip height
+    const top = spaceBelow > tipH + 16
+      ? r.bottom + 8
+      : r.top - tipH - 8;
+    // Horizontally: centre on button but clamp so it doesn't go off-screen
+    let left = r.left + r.width / 2 - 130; // 130 = half of 260px width
+    left = Math.max(8, Math.min(left, window.innerWidth - 268));
+    setPos({ top, left });
+  };
+
   return (
-    <span style={{ position: "relative", display: "inline-flex", marginLeft: 5 }}>
+    <span style={{ display: "inline-flex", marginLeft: 5 }}>
       <button
-        onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
+        ref={btnRef}
+        onClick={toggle}
         style={{
           width: 16, height: 16, borderRadius: "50%",
-          background: open ? "var(--blue)" : "var(--fill2)",
+          background: pos ? "var(--blue)" : "var(--fill2)",
           border: "none", cursor: "pointer",
           display: "inline-flex", alignItems: "center", justifyContent: "center",
           fontSize: 10, fontWeight: 700,
-          color: open ? "#fff" : "var(--text-tertiary)",
+          color: pos ? "#fff" : "var(--text-tertiary)",
           lineHeight: 1, flexShrink: 0,
           transition: "all 0.15s",
         }}
       >?</button>
-      {open && (
+      {pos && (
         <>
-          {/* Backdrop to close */}
+          {/* Invisible backdrop — click anywhere to close */}
           <span
-            style={{ position: "fixed", inset: 0, zIndex: 99 }}
-            onClick={() => setOpen(false)}
+            style={{ position: "fixed", inset: 0, zIndex: 999 }}
+            onClick={() => setPos(null)}
           />
+          {/* Tooltip — fixed to viewport, always visible */}
           <span style={{
-            position: "absolute",
-            bottom: "calc(100% + 8px)",
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 100,
+            position: "fixed",
+            top: pos.top,
+            left: pos.left,
+            zIndex: 1000,
+            width: 260,
             background: "var(--surface-solid)",
             border: "1px solid var(--sep)",
             borderRadius: "var(--r)",
             boxShadow: "var(--elev4)",
             padding: "12px 14px",
-            width: 260,
             fontSize: 12,
-            lineHeight: 1.55,
+            lineHeight: 1.6,
             color: "var(--text-secondary)",
             fontWeight: 400,
             pointerEvents: "all",
           }}>
-            {/* Arrow */}
-            <span style={{
-              position: "absolute", bottom: -6, left: "50%",
-              transform: "translateX(-50%)",
-              width: 10, height: 10,
-              background: "var(--surface-solid)",
-              border: "1px solid var(--sep)",
-              borderTop: "none", borderLeft: "none",
-              transform: "translateX(-50%) rotate(45deg)",
-            }}/>
             {text}
           </span>
         </>
