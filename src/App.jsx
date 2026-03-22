@@ -1721,65 +1721,136 @@ function Inp({label,value,onChange,pre,suf,min=0,max=Infinity,step=1,type="numbe
 }
 
 /* ══ OVERVIEW TAB ══════════════════════════════════════════════════════ */
-function OverviewTab({inputs,setI,results,totalYears}){
-  const{fmt,sym}=useFmt();
-  const good=results.npv>0;
-  const{sched}=results;
+const HELP = {
+  "NPV (Nominal)": "Net Present Value — the total value this project creates in today's money, after discounting all future cash flows at your WACC. Positive = the project earns more than it costs. Negative = it destroys value. The single most important number in capital budgeting.",
+  "NPV (Real)": "Real NPV discounts the same cash flows at the real WACC (= nominal WACC adjusted for inflation via the Fisher equation). When inflation > 0, the real WACC is lower than nominal, so Real NPV > Nominal NPV. When inflation = 0, both are equal. This tells you how much value the project creates in inflation-adjusted terms.",
+  "Real IRR": "Real Internal Rate of Return — your nominal IRR adjusted for inflation (Fisher: Real IRR = (1 + IRR) / (1 + inflation) − 1). This is the true return above inflation. Compare it to your real cost of capital to judge whether the project beats inflation-adjusted hurdle rates.",
+  "IRR (Nominal)": "Internal Rate of Return — the discount rate at which NPV = 0. If IRR > WACC, the project creates value. Compare it directly to your cost of capital. Computed via Newton-Raphson on the FCF stream.",
+  "Payback Period": "The year in which cumulative undiscounted free cash flows first turn positive — i.e., when you've recovered your initial investment. Shorter is better. This is a liquidity measure, not a value measure. It ignores cash flows after payback, so use it alongside NPV.",
+  "MIRR": "Modified IRR — fixes IRR's reinvestment assumption. Standard IRR assumes cash inflows are reinvested at the IRR itself (often unrealistic). MIRR assumes reinvestment at your WACC, which is more conservative and realistic. Calculated as the geometric average of PV of outflows vs FV of inflows.",
+  "PI": "Profitability Index — PI = 1 + NPV / Initial Investment. PI > 1 means the project creates value. PI < 1 means it destroys value. Useful for ranking projects when capital is constrained: a higher PI means more value created per euro invested.",
+  "RONA": "Return on Net Assets — average EBIT divided by average invested capital (net fixed assets + working capital) across operating years. Measures how efficiently the project uses its asset base to generate operating profit. Higher is better.",
+  "Total CAPEX": "Total Capital Expenditure — the sum of all investment outflows across all years. This is the total amount you are committing to invest in fixed assets. It forms the initial outflow in the FCF and NPV calculations.",
+};
 
-  return(
+function KpiTooltip({ text }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span style={{ position: "relative", display: "inline-flex", marginLeft: 5 }}>
+      <button
+        onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
+        style={{
+          width: 16, height: 16, borderRadius: "50%",
+          background: open ? "var(--blue)" : "var(--fill2)",
+          border: "none", cursor: "pointer",
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          fontSize: 10, fontWeight: 700,
+          color: open ? "#fff" : "var(--text-tertiary)",
+          lineHeight: 1, flexShrink: 0,
+          transition: "all 0.15s",
+        }}
+      >?</button>
+      {open && (
+        <>
+          {/* Backdrop to close */}
+          <span
+            style={{ position: "fixed", inset: 0, zIndex: 99 }}
+            onClick={() => setOpen(false)}
+          />
+          <span style={{
+            position: "absolute",
+            bottom: "calc(100% + 8px)",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 100,
+            background: "var(--surface-solid)",
+            border: "1px solid var(--sep)",
+            borderRadius: "var(--r)",
+            boxShadow: "var(--elev4)",
+            padding: "12px 14px",
+            width: 260,
+            fontSize: 12,
+            lineHeight: 1.55,
+            color: "var(--text-secondary)",
+            fontWeight: 400,
+            pointerEvents: "all",
+          }}>
+            {/* Arrow */}
+            <span style={{
+              position: "absolute", bottom: -6, left: "50%",
+              transform: "translateX(-50%)",
+              width: 10, height: 10,
+              background: "var(--surface-solid)",
+              border: "1px solid var(--sep)",
+              borderTop: "none", borderLeft: "none",
+              transform: "translateX(-50%) rotate(45deg)",
+            }}/>
+            {text}
+          </span>
+        </>
+      )}
+    </span>
+  );
+}
+
+function OverviewTab({ inputs, setI, results, totalYears }) {
+  const { fmt, sym } = useFmt();
+  const good = results.npv > 0;
+  const { sched } = results;
+
+  const kpis = [
+    { l: "NPV (Nominal)",  v: fmt(results.npv),   c: good ? "green" : "red",   b: good ? "badge-green" : "badge-red", bt: good ? "✓ Creates Value" : "✗ Destroys Value" },
+    { l: "NPV (Real)",     v: fmt(results.npvR),   c: (results.npvR || 0) > 0 ? "green" : "red",
+      note: "Real NPV discounts nominal cash flows at the real WACC (Fisher equation: real WACC = nominal WACC / (1 + inflation) − 1). When inflation > 0, real WACC < nominal WACC, so Real NPV > Nominal NPV. When inflation = 0, they are equal." },
+    { l: "Real IRR",       v: pct(results.realIRR != null ? results.realIRR * 100 : null), c: results.realIRR != null && results.realIRR > 0 ? "green" : "red" },
+    { l: "IRR (Nominal)",  v: pct(results.irr != null ? results.irr * 100 : null), c: results.irr != null && results.irr > inputs.discountRate / 100 ? "green" : "red" },
+    { l: "MIRR",           v: pct(results.mirr != null ? results.mirr * 100 : null), c: "" },
+    { l: "Payback Period", v: results.pb >= 0 ? `${results.pb} years` : "Beyond projection period", c: "" },
+    { l: "PI",             v: xN(results.pi),      c: results.pi > 1 ? "green" : "red" },
+    { l: "RONA",           v: pct((results.rona || 0) * 100), c: "" },
+    { l: "Total CAPEX",    v: fmt(results.totCapex), c: "amber" },
+  ];
+
+  return (
     <div className="fade-up">
-      {/* KPI row — 3 columns, 9 cards */}
-      <div className="kpi-grid" style={{marginBottom:20,gridTemplateColumns:"repeat(3,1fr)"}}>
-        {[
-          {l:"NPV (Nominal)",  v:fmt(results.npv),  c:good?"green":"red", b:good?"badge-green":"badge-red", bt:good?"✓ Creates Value":"✗ Destroys Value"},
-          {l:"NPV (Real)",     v:fmt(results.npvR),  c:(results.npvR||0)>0?"green":"red",
-            note:"Real NPV discounts nominal cash flows at the real WACC (Fisher equation: real WACC = nominal WACC / (1 + inflation) − 1). When inflation > 0, real WACC < nominal WACC, so Real NPV > Nominal NPV. When inflation = 0, they are equal."},
-          {l:"Real IRR",       v:pct(results.realIRR!=null?results.realIRR*100:null), c:results.realIRR!=null&&results.realIRR>0?"green":"red"},
-          {l:"IRR (Nominal)",  v:pct(results.irr!=null?results.irr*100:null),          c:results.irr!=null&&results.irr>inputs.discountRate/100?"green":"red"},
-          {l:"MIRR",           v:pct(results.mirr!=null?results.mirr*100:null),         c:""},
-          {l:"Payback Period", v:results.pb>=0?`${results.pb} years`:"Beyond projection period", c:""},
-          {l:"PI",             v:xN(results.pi),     c:results.pi>1?"green":"red"},
-          {l:"RONA",           v:pct((results.rona||0)*100), c:""},
-          {l:"Total CAPEX",    v:fmt(results.totCapex), c:"amber"},
-        ].map(k=>(
-          <div className={`kpi-card${k.c==="green"?" kpi-green":k.c==="red"?" kpi-red":k.c==="blue"?" kpi-blue":k.c==="amber"?" kpi-amber":""}`} key={k.l}>
-            <div className="kpi-label" style={{display:"flex",alignItems:"center",gap:4}}>
+      {/* KPI grid — 3 columns */}
+      <div className="kpi-grid" style={{ marginBottom: 20, gridTemplateColumns: "repeat(3,1fr)" }}>
+        {kpis.map(k => (
+          <div className={`kpi-card${k.c === "green" ? " kpi-green" : k.c === "red" ? " kpi-red" : k.c === "amber" ? " kpi-amber" : ""}`} key={k.l}>
+            <div className="kpi-label" style={{ display: "flex", alignItems: "center" }}>
               {k.l}
-              {k.note&&(
-                <span title={k.note} style={{cursor:"help",fontSize:10,color:"var(--text-quaternary)",fontWeight:700,lineHeight:1,background:"var(--fill2)",borderRadius:"50%",width:14,height:14,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</span>
-              )}
+              <KpiTooltip text={HELP[k.l] || k.note || ""} />
             </div>
-            <div className={`kpi-value t-num ${k.c==="amber"?"amber":k.c}`}>{k.v}</div>
-            {k.b&&<div className={`kpi-badge ${k.b}`}>{k.bt}</div>}
-            {k.note&&<div style={{fontSize:10,color:"var(--text-quaternary)",marginTop:4,lineHeight:1.4,fontStyle:"italic"}}>{k.note}</div>}
+            <div className={`kpi-value t-num ${k.c === "amber" ? "amber" : k.c}`}>{k.v}</div>
+            {k.b && <div className={`kpi-badge ${k.b}`}>{k.bt}</div>}
           </div>
         ))}
       </div>
 
       {/* TV-driven warning */}
-      {results.tvDriven&&(
-        <div className="info-banner info-amber" style={{marginBottom:14}}>
+      {results.tvDriven && (
+        <div className="info-banner info-amber" style={{ marginBottom: 14 }}>
           <span>⚠️</span>
-          <span><strong>NPV is driven primarily by terminal value.</strong> Operating cash flows alone do not recover the investment. TV contribution: <strong>{results.npv>0?pct((results.tvPV/results.npv)*100):"n/a"}</strong>. Consider whether the terminal value assumption is realistic.</span>
+          <span><strong>NPV is driven primarily by terminal value.</strong> Operating cash flows alone do not recover the investment. TV contribution: <strong>{results.npv > 0 ? pct((results.tvPV / results.npv) * 100) : "n/a"}</strong>. Consider whether the terminal value assumption is realistic.</span>
         </div>
       )}
 
       {/* Inflation note */}
-      {Number(inputs.inflationRate)>0&&(
-        <div className="info-banner info-blue" style={{marginBottom:14}}>
+      {Number(inputs.inflationRate) > 0 && (
+        <div className="info-banner info-blue" style={{ marginBottom: 14 }}>
           <span>ℹ️</span>
           <span>
-            Inflation {inputs.inflationRate}% · Real WACC = <strong>{((results.realW||0)*100).toFixed(2)}%</strong> (Fisher).{" "}
+            Inflation {inputs.inflationRate}% · Real WACC = <strong>{((results.realW || 0) * 100).toFixed(2)}%</strong> (Fisher).{" "}
             Real NPV <strong>{fmt(results.npvR)}</strong> vs Nominal NPV <strong>{fmt(results.npv)}</strong> — Real NPV is higher because the lower real discount rate reduces the penalty on future cash flows.{" "}
-            Real IRR <strong>{pct(results.realIRR!=null?results.realIRR*100:null)}</strong> is your return above inflation.
+            Real IRR <strong>{pct(results.realIRR != null ? results.realIRR * 100 : null)}</strong> is your return above inflation.
           </span>
         </div>
       )}
 
-      {results.tv>0&&(
-        <div className="info-banner info-green" style={{marginBottom:14}}>
+      {results.tv > 0 && (
+        <div className="info-banner info-green" style={{ marginBottom: 14 }}>
           <span>🏁</span>
-          <span>Terminal value ({inputs.tvMethod==="perpetuity"?`Gordon Growth @ ${inputs.tvGrowth}%`:`EV Multiple ${inputs.evMult}×`}): <strong>{fmt(results.tv)}</strong> · PV of TV: <strong>{fmt(results.tvPV)}</strong> · TV share of NPV: <strong>{results.npv>0?pct((results.tvPV/results.npv)*100):"n/a"}</strong></span>
+          <span>Terminal value ({inputs.tvMethod === "perpetuity" ? `Gordon Growth @ ${inputs.tvGrowth}%` : `EV Multiple ${inputs.evMult}×`}): <strong>{fmt(results.tv)}</strong> · PV of TV: <strong>{fmt(results.tvPV)}</strong> · TV share of NPV: <strong>{results.npv > 0 ? pct((results.tvPV / results.npv) * 100) : "n/a"}</strong></span>
         </div>
       )}
 
@@ -1789,72 +1860,79 @@ function OverviewTab({inputs,setI,results,totalYears}){
           <div className="card-header"><div className="t-headline">Project Parameters</div></div>
           <div className="card-body">
             <div className="grid-2">
-              <Inp label="Construction Phase" value={inputs.constructionYears} onChange={v=>setI("constructionYears",v)} suf="years" min={0} max={5}/>
-              <Inp label="Operation Phase"    value={inputs.operationYears}    onChange={v=>setI("operationYears",v)}    suf="years" min={1} max={30}/>
-              <Inp label="WACC / Discount Rate" value={inputs.discountRate}   onChange={v=>setI("discountRate",v)}  suf="%" min={0.1} max={100} step={0.1}/>
-              <Inp label="Corporate Tax Rate"   value={inputs.taxRate}         onChange={v=>setI("taxRate",v)}        suf="%" min={0} max={99} step={0.1}/>
-              <Inp label="Inflation Rate"        value={inputs.inflationRate}  onChange={v=>setI("inflationRate",v)}  suf="%" min={0} max={50} step={0.1}/>
+              <Inp label="Construction Phase" value={inputs.constructionYears} onChange={v => setI("constructionYears", v)} suf="years" min={0} max={5} />
+              <Inp label="Operation Phase"    value={inputs.operationYears}    onChange={v => setI("operationYears", v)}    suf="years" min={1} max={30} />
+              <Inp label="WACC / Discount Rate" value={inputs.discountRate}    onChange={v => setI("discountRate", v)}      suf="%" min={0.1} max={100} step={0.1} />
+              <Inp label="Corporate Tax Rate"   value={inputs.taxRate}         onChange={v => setI("taxRate", v)}           suf="%" min={0} max={99} step={0.1} />
+              <Inp label="Inflation Rate"        value={inputs.inflationRate}  onChange={v => setI("inflationRate", v)}     suf="%" min={0} max={50} step={0.1} />
             </div>
           </div>
         </div>
 
-        {/* Financing + TV */}
-        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        {/* Financing + Terminal Value */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div className="card">
             <div className="card-header"><div className="t-headline">Financing</div></div>
             <div className="card-body">
               <div className="grid-2">
-                <Inp label="Debt Amount"   value={inputs.debtAmt}  onChange={v=>setI("debtAmt",v)}  pre={sym} min={0}/>
-                <Inp label="Interest Rate" value={inputs.intRate}   onChange={v=>setI("intRate",v)}   suf="%" min={0} max={50} step={0.1}/>
-                <Inp label="Loan Term"     value={inputs.loanYrs}   onChange={v=>setI("loanYrs",v)}   suf="yrs" min={1} max={30}/>
+                <Inp label="Debt Amount"   value={inputs.debtAmt}  onChange={v => setI("debtAmt", v)}  pre={sym} min={0} />
+                <Inp label="Interest Rate" value={inputs.intRate}   onChange={v => setI("intRate", v)}  suf="%" min={0} max={50} step={0.1} />
+                <Inp label="Loan Term"     value={inputs.loanYrs}   onChange={v => setI("loanYrs", v)}  suf="yrs" min={1} max={30} />
               </div>
             </div>
           </div>
           <div className="card">
             <div className="card-header">
               <div className="t-headline">Terminal Value</div>
-              <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:13}}>
-                <button className={`toggle${inputs.useTv?" on":""}`} onClick={()=>setI("useTv",!inputs.useTv)}/>
-                <span style={{color:"var(--text-secondary)"}}>{inputs.useTv?"Enabled":"Disabled"}</span>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13 }}>
+                <button className={`toggle${inputs.useTv ? " on" : ""}`} onClick={() => setI("useTv", !inputs.useTv)} />
+                <span style={{ color: "var(--text-secondary)" }}>{inputs.useTv ? "Enabled" : "Disabled"}</span>
               </label>
             </div>
-            {inputs.useTv&&(
+            {inputs.useTv && (
               <div className="card-body">
-                <div style={{marginBottom:12}}>
+                <div style={{ marginBottom: 12 }}>
                   <label className="input-label">Method</label>
-                  <select className="select-field" value={inputs.tvMethod||"perpetuity"} onChange={e=>setI("tvMethod",e.target.value)}>
+                  <select className="select-field" value={inputs.tvMethod || "perpetuity"} onChange={e => setI("tvMethod", e.target.value)}>
                     <option value="perpetuity">Gordon Growth / Perpetuity</option>
                     <option value="multiple">EV / EBITDA Multiple</option>
                   </select>
                 </div>
-                {(inputs.tvMethod||"perpetuity")==="perpetuity"
-                  ? <Inp label="Terminal Growth Rate" value={inputs.tvGrowth} onChange={v=>setI("tvGrowth",v)} suf="%" min={-5} max={20} step={0.1}/>
-                  : <Inp label="EV/EBITDA Multiple"   value={inputs.evMult}  onChange={v=>setI("evMult",v)}   min={1} max={50} step={0.5}/>
+                {(inputs.tvMethod || "perpetuity") === "perpetuity"
+                  ? <Inp label="Terminal Growth Rate" value={inputs.tvGrowth} onChange={v => setI("tvGrowth", v)} suf="%" min={-5} max={20} step={0.1} />
+                  : <Inp label="EV/EBITDA Multiple"   value={inputs.evMult}  onChange={v => setI("evMult", v)}   min={1} max={50} step={0.5} />
                 }
-                {results.tv>0&&<div style={{marginTop:10,padding:"9px 12px",background:"var(--green-bg)",borderRadius:"var(--r-sm)",fontSize:12,color:"var(--green)",fontWeight:500}}>TV: {fmt(results.tv)} · PV: {fmt(results.tvPV)}</div>}
+                {results.tv > 0 && (
+                  <div style={{ marginTop: 10, padding: "9px 12px", background: "var(--green-bg)", borderRadius: "var(--r-sm)", fontSize: 12, color: "var(--green)", fontWeight: 500 }}>
+                    TV: {fmt(results.tv)} · PV: {fmt(results.tvPV)}
+                  </div>
+                )}
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Revenue overview chart - only operation years */}
-      {sched.filter(r=>r.revenue>0).length>0&&(
-        <div className="card" style={{marginTop:14}}>
+      {/* Revenue overview chart — operation years only */}
+      {sched.filter(r => r.revenue > 0).length > 0 && (
+        <div className="card" style={{ marginTop: 14 }}>
           <div className="card-header"><div className="t-headline">Revenue & Net Income</div></div>
-          <div style={{padding:"14px 16px 8px"}}>
+          <div style={{ padding: "14px 16px 8px" }}>
             <ResponsiveContainer width="100%" height={220}>
-              <ComposedChart data={sched.filter(r=>r.revenue>0)} margin={{top:5,right:16,left:0,bottom:0}}>
+              <ComposedChart data={sched.filter(r => r.revenue > 0)} margin={{ top: 5, right: 16, left: 0, bottom: 0 }}>
                 <defs>
-                  <linearGradient id="gR" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="var(--blue)" stopOpacity={0.2}/><stop offset="95%" stopColor="var(--blue)" stopOpacity={0}/></linearGradient>
+                  <linearGradient id="gR" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%"  stopColor="var(--blue)" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="var(--blue)" stopOpacity={0} />
+                  </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--sep)" vertical={false}/>
-                <XAxis dataKey="year" tick={{fill:"var(--text-tertiary)",fontSize:11}} axisLine={false} tickLine={false}/>
-                <YAxis tickFormatter={v=>fmt(v)} tick={{fill:"var(--text-tertiary)",fontSize:10}} axisLine={false} tickLine={false} width={60}/>
-                <Tooltip content={<ChartTip/>}/>
-                <Area type="monotone" dataKey="revenue" name="Revenue" stroke="var(--blue)" fill="url(#gR)" strokeWidth={2}/>
-                <Bar dataKey="netIncome" name="Net Income" fill="var(--green)" radius={[4,4,0,0]} opacity={0.85}/>
-                <ReferenceLine y={0} stroke="var(--sep)"/>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--sep)" vertical={false} />
+                <XAxis dataKey="year" tick={{ fill: "var(--text-tertiary)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tickFormatter={v => fmt(v)} tick={{ fill: "var(--text-tertiary)", fontSize: 10 }} axisLine={false} tickLine={false} width={60} />
+                <Tooltip content={<ChartTip />} />
+                <Area type="monotone" dataKey="revenue"   name="Revenue"    stroke="var(--blue)"  fill="url(#gR)" strokeWidth={2} />
+                <Bar             dataKey="netIncome" name="Net Income" fill="var(--green)" radius={[4, 4, 0, 0]} opacity={0.85} />
+                <ReferenceLine y={0} stroke="var(--sep)" />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
